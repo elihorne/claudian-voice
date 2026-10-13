@@ -10,12 +10,18 @@ Start a session from the ribbon microphone or the command palette. The plugin li
 
 Speech is tied to the tab the prompt went to. A background tab finishing a turn never speaks.
 
+While a session runs, a pill at the top of every Claudian chat view shows the phase (listening, waiting, speaking) with a Stop button, and the status bar mirrors it.
+
+## Also
+
+Hold ⌘⌥V to dictate into the chat composer without sending, or ⌘⌥E to rewrite the current selection with a spoken instruction through Claudian's inline edit. "Read the current note aloud" reads from the cursor with the paragraph highlighted; skip by heading. Say "note to self, …" in a session to append to today's daily note without involving the agent. See [ROADMAP.md](ROADMAP.md) for where this is going.
+
 ## Requirements
 
 - Obsidian desktop with Claudian installed and enabled, at a version that exposes `app.plugins.plugins.realclaudian.api` (version 1).
 - A microphone.
 - For speech-to-text, a Whisper-compatible HTTP endpoint. The default is OpenAI's `/v1/audio/transcriptions` with your API key; the same request shape works with Groq and with local servers such as [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) or [whisper.cpp](https://github.com/ggerganov/whisper.cpp)'s server, which keep audio on your machine.
-- For spoken replies, nothing extra: the plugin uses the voices your operating system provides.
+- For spoken replies, the default is OpenAI's speech endpoint (same key as transcription; `gpt-4o-mini-tts`, ten voices). Switch the speech engine to "System voices" for free, offline output through your operating system; on macOS download an Enhanced or Premium voice under Accessibility → Spoken Content if the default sounds mechanical.
 
 Chromium's built-in Web Speech recogniser is available as an experimental engine, but Electron does not bundle the keys it needs, so in Obsidian it usually fails with a network error. It is there for the day that changes.
 
@@ -55,7 +61,9 @@ src/
 ├── speech/
 │   ├── WhisperHttpRecognizer.ts # MediaRecorder + silence detection + HTTP transcription
 │   ├── WebSpeechRecognizer.ts   # Chromium recogniser (experimental)
-│   └── SynthesisSpeaker.ts      # speechSynthesis output
+│   ├── OpenAISpeaker.ts         # Neural TTS via /v1/audio/speech, prefetches the next sentence
+│   └── SynthesisSpeaker.ts      # OS voices via speechSynthesis
+├── ui/VoiceIndicator.ts         # In-view status pill
 └── voice/
     ├── VoiceSession.ts          # Listen → submit → speak → listen loop, barge-in
     └── speakable.ts             # Markdown → speech text, sentence cursor, cancel phrases

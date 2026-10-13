@@ -9,6 +9,13 @@ describe('toSpeakable', () => {
     assert.equal(toSpeakable('Here is code:\n```ts\nconst x = 1;'), 'Here is code:');
   });
 
+  it('keeps list items and their numbers, dropping only the markers', () => {
+    const input = '- Fetch the meetings\n- Write them down\n\n1. First step\n2. Second step';
+    assert.equal(toSpeakable(input), 'Fetch the meetings\nWrite them down\n1, First step\n2, Second step');
+    const { sentences } = splitSentences(`${toSpeakable(input)}\n`);
+    assert.deepEqual(sentences, ['Fetch the meetings', 'Write them down', '1, First step', '2, Second step']);
+  });
+
   it('strips urls, paths, inline code, and markdown markers but keeps link text', () => {
     const input = '## Title\n\n- See [the docs](https://example.com/x) and `foo()` at ./src/main.ts **now**.';
     assert.equal(toSpeakable(input), 'Title\nSee the docs and at now.');

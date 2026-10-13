@@ -1,6 +1,6 @@
 import { requestUrl } from 'obsidian';
 
-import type { RecognitionResult, SpeechRecognizer } from './types';
+import type { ListenCallbacks, RecognitionResult, SpeechRecognizer } from './types';
 
 export interface WhisperHttpOptions {
   getEndpoint: () => string;
@@ -13,6 +13,8 @@ export interface WhisperHttpOptions {
   getNoSpeechTimeoutMs: () => number;
   /** RMS level below which audio counts as silence. */
   getSilenceThreshold: () => number;
+  /** Vocabulary hint (glossary terms); whisper-1 takes it as `prompt`. */
+  getPrompt?: () => string;
 }
 
 /**
@@ -22,6 +24,11 @@ export interface WhisperHttpOptions {
  */
 export class WhisperHttpRecognizer implements SpeechRecognizer {
   readonly id = 'whisper-http' as const;
+  #finishRequested = false;
+
+  finish(): void {
+    this.#finishRequested = true;
+  }
 
   constructor(private readonly options: WhisperHttpOptions) {}
 
@@ -32,8 +39,8 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
       && this.options.getEndpoint().trim().length > 0;
   }
 
-  async listen(signal: AbortSignal, onLevel?: (rms: number) => void): Promise<RecognitionResult | null> {
-    const audio = await this.#record(signal, onLevel);
+  async listen(signal: AbortSignal, callbacks: ListenCallbacks = {}): Promise<RecognitionResult | null> {
+    const audio = await this.#record(signal, callbacks.onLevel);
     if (!audio || signal.aborted) return null;
     const text = await this.#transcribe(audio);
     return text ? { text } : null;
@@ -55,24 +62,41 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
 
     const silenceMs = this.options.getSilenceMs();
     const noSpeechMs = this.options.getNoSpeechTimeoutMs();
-    const threshold = this.options.getSilenceThreshold();
+    const configuredThreshold = this.options.getSilenceThreshold();
     const started = performance.now();
     let lastVoice = 0;
     let heardSpeech = false;
+    let voicedMs = 0;
+    let lastTick = started;
+    // Calibrate against the room for the first 300ms so the gate sits above ambient noise
+    // (fans, keyboard, the tail of the agent's own speech) rather than at a fixed level.
+    let ambientPeak = 0;
+    let threshold = configuredThreshold;
 
+    this.#finishRequested = false;
     const stopped = new Promise<void>(resolve => { recorder.onstop = () => resolve(); });
     recorder.start(250);
 
     const finish = await new Promise<'speech' | 'silence' | 'aborted'>(resolve => {
       const tick = () => {
         if (signal.aborted) return resolve('aborted');
+        if (this.#finishRequested) return resolve(heardSpeech ? 'speech' : 'silence');
         analyser.getFloatTimeDomainData(samples);
         const rms = rootMeanSquare(samples);
         onLevel?.(rms);
         const now = performance.now();
+        const delta = now - lastTick;
+        lastTick = now;
+        if (now - started < CALIBRATION_MS) {
+          ambientPeak = Math.max(ambientPeak, rms);
+          threshold = Math.max(configuredThreshold, ambientPeak * AMBIENT_MARGIN);
+          requestAnimationFrame(tick);
+          return;
+        }
         if (rms > threshold) {
           heardSpeech = true;
           lastVoice = now;
+          voicedMs += delta;
         } else if (heardSpeech && now - lastVoice > silenceMs) {
           return resolve('speech');
         } else if (!heardSpeech && now - started > noSpeechMs) {
@@ -89,7 +113,8 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
     source.disconnect();
     await context.close().catch(() => undefined);
 
-    if (finish !== 'speech') return null;
+    // A click or cough crosses the gate but is not an utterance; Whisper hallucinates on those.
+    if (finish !== 'speech' || voicedMs < MIN_VOICED_MS) return null;
     return new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
   }
 
@@ -99,7 +124,11 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
     const fields: Array<[string, string]> = [['model', this.options.getModel() || 'whisper-1']];
     const language = this.options.getLanguage().trim();
     if (language) fields.push(['language', language]);
-    fields.push(['response_format', 'json']);
+    const prompt = this.options.getPrompt?.().trim() ?? '';
+    if (prompt) fields.push(['prompt', prompt.slice(0, 800)]);
+    // verbose_json carries per-segment no_speech_prob and the detected language, which is
+    // how we tell a real utterance from Whisper's "thanks for watching" on silence.
+    fields.push(['response_format', 'verbose_json']);
 
     const body = await buildMultipart(boundary, fields, { name: 'file', filename: `utterance.${extension}`, type: audio.type || 'audio/webm', blob: audio });
     const headers: Record<string, string> = { 'Content-Type': `multipart/form-data; boundary=${boundary}` };
@@ -116,10 +145,61 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
     if (response.status < 200 || response.status >= 300) {
       throw new Error(`Transcription failed (${response.status}): ${response.text.slice(0, 200)}`);
     }
-    const payload = response.json as { text?: unknown };
-    return typeof payload.text === 'string' ? payload.text.trim() : '';
+    const payload = response.json as VerboseTranscription;
+    const text = typeof payload.text === 'string' ? payload.text.trim() : '';
+    if (!text) return '';
+    if (isLikelyHallucination(payload, language)) return '';
+    return text;
   }
 }
+
+export interface VerboseTranscription {
+  text?: unknown;
+  language?: unknown;
+  duration?: unknown;
+  segments?: Array<{ no_speech_prob?: number; avg_logprob?: number; text?: string }>;
+}
+
+const CALIBRATION_MS = 300;
+const AMBIENT_MARGIN = 2.5;
+const MIN_VOICED_MS = 400;
+
+/** Whisper's signature outputs on silence, in the languages it most often drifts into. */
+const PHANTOM_PHRASES = [
+  /thank(s| you) for watching/i,
+  /subscribe/i,
+  /시청.*감사/u,
+  /ご視聴ありがとう/u,
+  /^evet\.?$/i,
+  /^you\.?$/i,
+  /^bye\.?$/i,
+  /^thank you\.?$/i,
+];
+
+export function isLikelyHallucination(payload: VerboseTranscription, languageHint: string): boolean {
+  const text = typeof payload.text === 'string' ? payload.text.trim() : '';
+  if (PHANTOM_PHRASES.some(pattern => pattern.test(text))) return true;
+  const segments = payload.segments ?? [];
+  if (segments.length > 0) {
+    const confidentSpeech = segments.some(segment =>
+      (segment.no_speech_prob ?? 0) < 0.5 && (segment.avg_logprob ?? 0) > -1.0);
+    if (!confidentSpeech) return true;
+  }
+  // A language hint was given but Whisper answered in another language: noise, not speech.
+  if (languageHint && typeof payload.language === 'string') {
+    const detected = payload.language.toLowerCase();
+    const hint = languageHint.toLowerCase();
+    if (detected !== hint && !LANGUAGE_NAMES[hint]?.includes(detected)) return true;
+  }
+  return false;
+}
+
+/** verbose_json reports full names ("english") while users type codes ("en"). */
+const LANGUAGE_NAMES: Record<string, string[]> = {
+  en: ['english'], de: ['german'], sv: ['swedish'], fr: ['french'], es: ['spanish'], it: ['italian'],
+  pt: ['portuguese'], nl: ['dutch'], ja: ['japanese'], zh: ['chinese'], ko: ['korean'], ru: ['russian'],
+  pl: ['polish'], tr: ['turkish'], da: ['danish'], no: ['norwegian'], fi: ['finnish'],
+};
 
 function pickMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined;

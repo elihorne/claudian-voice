@@ -1,17 +1,23 @@
-import type { ClaudianApi, ClaudianChatHandle } from '../claudian/api';
+import type { ClaudianBridge, TurnResult } from '../claudian/bridge';
 import type { Speaker, SpeechRecognizer } from '../speech/types';
+import { type LocalVerb, parseLocalVerb } from './LocalVerbs';
 import { isCancelPhrase, SentenceCursor } from './speakable';
+
+/** Watches the mic while the agent speaks; resolves true when the user talks over it. */
+export interface BargeInWatcher {
+  watch(signal: AbortSignal): Promise<boolean>;
+}
 
 export type VoiceState =
   | { phase: 'idle' }
-  | { phase: 'listening'; level: number }
+  | { phase: 'listening'; level: number; transcript: string }
   | { phase: 'transcribing' }
-  | { phase: 'thinking'; tabId: string }
-  | { phase: 'speaking'; tabId: string }
+  | { phase: 'thinking'; sessionId: string }
+  | { phase: 'speaking'; sessionId: string }
   | { phase: 'error'; message: string };
 
 export interface VoiceSessionDeps {
-  api: ClaudianApi;
+  bridge: ClaudianBridge;
   recognizer: SpeechRecognizer;
   speaker: Speaker;
   /** Continuous conversation: listen again after each reply. Off means one dictation. */
@@ -20,21 +26,44 @@ export interface VoiceSessionDeps {
   isSpeechEnabled: () => boolean;
   /** Insert the transcript into the composer instead of submitting directly. */
   shouldAutoSubmit: () => boolean;
+  /** Appended to spoken prompts so the agent answers at conversational length. */
+  getPromptSuffix: () => string;
+  /** Has this conversation already received the spoken-length hint? Owned by the plugin so it survives restarts. */
+  hasHinted: (sessionId: string) => boolean;
+  markHinted: (sessionId: string) => void;
+  /** Context to prepend to the transcript (e.g. a wikilink to the active note); empty when none. */
+  getContextPrefix?: (sessionId: string) => string;
+  /** Handles an utterance inside Obsidian without the agent. Returns a short spoken confirmation, or null if unhandled. */
+  handleLocalVerb?: (verb: LocalVerb) => Promise<string | null>;
   onState: (state: VoiceState) => void;
   /** Wait this long after the reply settles before listening again. */
   getTurnGapMs: () => number;
+  /** Present when voice barge-in is enabled; null means interrupt only by command. */
+  bargeIn?: BargeInWatcher | null;
+  /** Audible state cues; each resolves when the cue has finished playing. */
+  cue?: (kind: 'start' | 'listen' | 'stop' | 'error') => Promise<void>;
+  /** Spoken while the agent works without producing text; null disables. */
+  getProgressPhrases?: () => { first: string; again: string; firstAfterMs: number; everyMs: number } | null;
 }
 
+type TurnOutcome = 'turn-complete' | 'nothing-heard' | 'stopped';
+
+/** Hold speech until at least this much text has accumulated, unless the turn is over. */
+const MIN_UTTERANCE_CHARS = 60;
+
 /**
- * The hands-free loop: listen, submit to the active Claudian tab, speak the reply as it
- * streams, then listen again. One session at a time; TTS is locked to the tab the prompt
- * went to, so background tabs never speak.
+ * The hands-free loop: listen, send to the active Claudian session, speak the reply, then
+ * listen again. Speech streams sentence by sentence when the bridge supports it and is
+ * spoken whole otherwise. One session at a time; speech is locked to the session the
+ * prompt went to, so a background tab finishing a turn never speaks.
  */
 export class VoiceSession {
   #running = false;
   #abort: AbortController | null = null;
-  #unsubscribe: (() => void) | null = null;
   #state: VoiceState = { phase: 'idle' };
+  #activeSessionId: string | null = null;
+  /** Set by interrupt(): the current turn is being cut short to listen again, not to stop. */
+  #interrupted = false;
 
   constructor(private readonly deps: VoiceSessionDeps) {}
 
@@ -50,22 +79,30 @@ export class VoiceSession {
   async start(): Promise<void> {
     if (this.#running) return;
     this.#running = true;
+    let firstTurn = true;
     try {
+      await this.deps.cue?.('start');
       do {
+        if (!firstTurn && this.#running) await this.deps.cue?.('listen');
+        firstTurn = false;
         const outcome = await this.#turn();
         if (outcome === 'stopped') break;
         if (outcome === 'turn-complete' && this.deps.isConversationMode()) {
           await sleep(this.deps.getTurnGapMs(), this.#abort?.signal);
         }
-      } while (this.#running && this.deps.isConversationMode());
+        // An interruption always listens again, even in single-shot mode: the user just spoke.
+      } while (this.#running && (this.deps.isConversationMode() || this.#interrupted));
     } finally {
       this.#running = false;
-      this.#cleanupTurn();
-      if (this.#state.phase !== 'error') this.#setState({ phase: 'idle' });
+      this.#abort = null;
+      this.deps.recognizer.dispose?.();
+      const errored = this.#state.phase === 'error';
+      if (!errored) this.#setState({ phase: 'idle' });
+      void this.deps.cue?.(errored ? 'error' : 'stop');
     }
   }
 
-  /** Stop listening and speaking. Does not cancel the agent's turn; that is the user's Stop in Claudian. */
+  /** Stop listening and speaking. The agent's turn, if any, is cancelled too. */
   stop(): void {
     this.#running = false;
     this.#abort?.abort();
@@ -74,97 +111,156 @@ export class VoiceSession {
 
   /** Barge-in: the user wants to talk over the reply. Cuts audio and the agent's turn, then listens. */
   interrupt(): void {
+    if (!this.#running) return;
+    this.#interrupted = true;
     this.deps.speaker.cancel();
-    const chat = this.deps.api.getActiveChat();
-    if (chat?.isStreaming) chat.stop();
+    if (this.#activeSessionId) this.deps.bridge.cancel(this.#activeSessionId);
     this.#abort?.abort();
   }
 
-  async #turn(): Promise<'turn-complete' | 'nothing-heard' | 'stopped'> {
+  async #turn(): Promise<TurnOutcome> {
     this.#abort = new AbortController();
     const { signal } = this.#abort;
+    this.#interrupted = false;
+    const outcome = await this.#runTurn(signal);
+    this.#abort = null;
+    // An interrupted turn is not a stopped session: fall through to the next listen.
+    if (outcome === 'stopped' && this.#interrupted && this.#running) return 'nothing-heard';
+    return outcome;
+  }
+
+  async #runTurn(signal: AbortSignal): Promise<TurnOutcome> {
     try {
-      this.#setState({ phase: 'listening', level: 0 });
-      const heard = await this.deps.recognizer.listen(signal, level => {
-        if (this.#state.phase === 'listening') this.#setState({ phase: 'listening', level });
+      this.#setState({ phase: 'listening', level: 0, transcript: '' });
+      const heard = await this.deps.recognizer.listen(signal, {
+        onLevel: level => {
+          if (this.#state.phase === 'listening') this.#setState({ ...this.#state, level });
+        },
+        onPartial: transcript => {
+          if (this.#state.phase === 'listening') this.#setState({ ...this.#state, transcript });
+        },
       });
       if (!this.#running || signal.aborted) return 'stopped';
-      if (!heard) return 'nothing-heard';
-      if (isCancelPhrase(heard.text)) return 'nothing-heard';
+      if (!heard || isCancelPhrase(heard.text)) return 'nothing-heard';
 
-      const chat = this.deps.api.getActiveChat();
-      if (!chat) {
+      // Capture, read-aloud and the like never need the agent; answer them here in milliseconds.
+      const verb = this.deps.handleLocalVerb ? parseLocalVerb(heard.text) : null;
+      if (verb && this.deps.handleLocalVerb) {
+        const confirmation = await this.deps.handleLocalVerb(verb);
+        if (confirmation !== null) {
+          if (confirmation && this.deps.isSpeechEnabled()) await this.deps.speaker.speak(confirmation);
+          return 'turn-complete';
+        }
+      }
+
+      const sessionId = this.deps.bridge.getActiveSessionId();
+      if (!sessionId) {
         this.#setState({ phase: 'error', message: 'No Claudian chat is open.' });
         return 'stopped';
       }
+      this.#activeSessionId = sessionId;
 
       if (!this.deps.shouldAutoSubmit()) {
-        chat.appendText(heard.text);
-        return 'turn-complete';
+        if (!this.deps.bridge.appendText?.(sessionId, heard.text)) {
+          // No composer access on this API: sending is the only option.
+          await this.#sendAndSpeak(sessionId, heard.text, signal);
+        }
+        return signal.aborted ? 'stopped' : 'turn-complete';
       }
 
-      this.#setState({ phase: 'thinking', tabId: chat.tabId });
-      const spoken = this.deps.isSpeechEnabled() ? this.#speakReply(chat, signal) : Promise.resolve();
-      await chat.submit(heard.text);
-      await spoken;
-      return signal.aborted ? 'stopped' : 'turn-complete';
+      await this.#sendAndSpeak(sessionId, heard.text, signal);
+      if (signal.aborted) return 'stopped';
+      return this.#state.phase === 'error' ? 'stopped' : 'turn-complete';
     } catch (error) {
       if (signal.aborted) return 'stopped';
       this.#setState({ phase: 'error', message: error instanceof Error ? error.message : String(error) });
       return 'stopped';
     } finally {
-      this.#cleanupTurn();
+      this.#activeSessionId = null;
     }
   }
 
-  /**
-   * Resolves when the tab's turn has settled and every queued sentence has been spoken.
-   * Subscribes before submit so the first chunk is never missed.
-   */
-  #speakReply(chat: ClaudianChatHandle, signal: AbortSignal): Promise<void> {
-    const cursor = new SentenceCursor();
-    const tabId = chat.tabId;
-    let queue: Promise<void> = Promise.resolve();
-    let sawStreaming = false;
-    let lastText = '';
+  /** Sends the prompt and speaks the reply, streaming or whole, until both have finished. */
+  async #sendAndSpeak(sessionId: string, transcript: string, signal: AbortSignal): Promise<void> {
+    const { bridge, speaker } = this.deps;
+    const speak = this.deps.isSpeechEnabled();
+    const suffix = this.deps.getPromptSuffix().trim();
+    // The hint goes out once per conversation; the agent keeps it in context afterwards.
+    const includeHint = speak && suffix && !this.deps.hasHinted(sessionId);
+    if (includeHint) this.deps.markHinted(sessionId);
+    const prefix = this.deps.getContextPrefix?.(sessionId) ?? '';
+    const body = prefix ? `${prefix}${transcript}` : transcript;
+    const prompt = includeHint ? `${body}\n\n${suffix}` : body;
 
-    const enqueue = (sentences: string[]) => {
-      for (const sentence of sentences) {
-        queue = queue.then(() => (signal.aborted ? undefined : this.deps.speaker.speak(sentence)));
+    this.#setState({ phase: 'thinking', sessionId });
+    this.#watchForBargeIn(signal);
+
+    const cursor = new SentenceCursor();
+    const spoken: Promise<void>[] = [];
+    let heardReply = false;
+    // Very short fragments are held for the next sentence: one request per clause makes
+    // some voices drift between calls and chops the prosody.
+    let held = '';
+    const flushHeld = () => {
+      if (!held || signal.aborted) return;
+      spoken.push(speaker.speak(held));
+      held = '';
+    };
+    const enqueue = (sentences: string[], final = false) => {
+      if (signal.aborted) return;
+      if (sentences.length > 0) {
+        heardReply = true;
+        held = [held, ...sentences].filter(Boolean).join(' ');
+        if (this.#state.phase !== 'speaking') this.#setState({ phase: 'speaking', sessionId });
       }
-      if (sentences.length > 0 && this.#state.phase !== 'speaking') this.#setState({ phase: 'speaking', tabId });
+      if (held.length >= MIN_UTTERANCE_CHARS || final) flushHeld();
     };
 
-    return new Promise<void>(resolve => {
-      const finish = () => {
-        this.#unsubscribe?.();
-        this.#unsubscribe = null;
-        enqueue(cursor.flush());
-        void queue.then(() => resolve());
-      };
-      const onAbort = () => { this.deps.speaker.cancel(); finish(); };
-      signal.addEventListener('abort', onAbort, { once: true });
+    // Long tool-heavy turns are silent until the agent writes; say so rather than leave dead air.
+    const progress = speak ? this.deps.getProgressPhrases?.() ?? null : null;
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleProgress = (delay: number, phrase: string) => {
+      if (!progress) return;
+      progressTimer = setTimeout(() => {
+        if (signal.aborted || heardReply) return;
+        void speaker.speak(phrase);
+        scheduleProgress(progress.everyMs, progress.again);
+      }, delay);
+    };
+    scheduleProgress(progress?.firstAfterMs ?? 0, progress?.first ?? '');
+    const clearProgress = () => { if (progressTimer) clearTimeout(progressTimer); progressTimer = null; };
 
-      this.#unsubscribe = chat.subscribe(() => {
-        if (signal.aborted) return;
-        if (chat.isStreaming) sawStreaming = true;
-        const activity = chat.activity;
-        if (activity?.kind === 'text' && activity.text !== lastText) {
-          lastText = activity.text;
-          enqueue(cursor.push(activity.text));
-        }
-        if (sawStreaming && !chat.isStreaming) {
-          signal.removeEventListener('abort', onAbort);
-          finish();
-        }
-      });
+    const aborted = new Promise<TurnResult>(resolve => {
+      signal.addEventListener('abort', () => resolve({ text: '', outcome: 'interrupted' }), { once: true });
     });
+    const result = await Promise.race([
+      bridge.send(sessionId, prompt, {
+        signal,
+        onPartial: speak && bridge.supportsStreaming ? partial => enqueue(cursor.push(partial)) : undefined,
+      }),
+      aborted,
+    ]);
+    clearProgress();
+
+    if (signal.aborted || result.outcome === 'interrupted') return;
+    if (result.outcome === 'error') {
+      this.#setState({ phase: 'error', message: result.text || 'The agent turn failed.' });
+      return;
+    }
+    if (speak) {
+      if (!bridge.supportsStreaming) enqueue(cursor.push(result.text));
+      enqueue(cursor.flush(), true);
+      await Promise.race([Promise.allSettled(spoken), aborted]);
+    }
   }
 
-  #cleanupTurn(): void {
-    this.#unsubscribe?.();
-    this.#unsubscribe = null;
-    this.#abort = null;
+  /** Runs the barge-in monitor for the life of this turn; a hit becomes interrupt(). */
+  #watchForBargeIn(signal: AbortSignal): void {
+    const watcher = this.deps.bargeIn;
+    if (!watcher || !this.deps.isSpeechEnabled()) return;
+    void watcher.watch(signal).then(bargedIn => {
+      if (bargedIn && !signal.aborted) this.interrupt();
+    }).catch(() => undefined); // mic unavailable: fall back to command-only interrupt
   }
 
   #setState(state: VoiceState): void {

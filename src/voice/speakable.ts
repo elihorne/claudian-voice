@@ -17,7 +17,8 @@ export function toSpeakable(markdown: string): string {
     .replace(/(?:^|\s)(?:~|\.{1,2})?\/[\w./-]+/g, ' ')
     .replace(/^\s{0,3}#{1,6}\s+/gm, '')
     .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
+    // Keep list numbers so order survives in speech; a comma reads as "one, …" without ending the sentence.
+    .replace(/^\s*(\d+)[.)]\s+/gm, '$1, ')
     .replace(/^\s*>\s?/gm, '')
     .replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, '$1')
     .replace(/\|/g, ' ')
