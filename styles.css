@@ -1,0 +1,30 @@
+.claudian-voice-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.claudian-voice-status-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.claudian-voice-status[data-phase="listening"] {
+  color: var(--text-accent);
+}
+
+.claudian-voice-status[data-phase="listening"] .claudian-voice-status-icon {
+  opacity: calc(0.45 + 0.55 * var(--claudian-voice-level, 0));
+}
+
+.claudian-voice-status[data-phase="speaking"] {
+  color: var(--text-success);
+}
+
+.claudian-voice-status[data-phase="error"] {
+  color: var(--text-error);
+}
+
+.claudian-voice-ribbon-active {
+  color: var(--text-accent);
+}
