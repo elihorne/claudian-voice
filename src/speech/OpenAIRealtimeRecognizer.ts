@@ -19,11 +19,16 @@ export interface RealtimeOptions {
   useSemanticVad?: () => boolean;
   /** How quickly semantic VAD commits a turn. */
   getEagerness?: () => 'low' | 'medium' | 'high' | 'auto';
+  /** Log every socket event to the console. */
+  isDebug?: () => boolean;
 }
 
 const SOCKET_URL = 'wss://api.openai.com/v1/realtime?intent=transcription';
 const TARGET_RATE = 24000;
-const MIN_SPEECH_MS = 350;
+/** How much idle audio to retain, and how much of it to send ahead of live audio. */
+const PREROLL_SAMPLES = TARGET_RATE; // 1s
+const PREROLL_SEND_MS = 700;
+const MAX_RECONNECTS = 3;
 
 /**
  * Streaming speech-to-text over OpenAI's Realtime API in transcription mode. Audio goes up
@@ -43,6 +48,10 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
   #sending = false;
   #listeners = new Set<(event: RealtimeEvent) => void>();
   #onLevel: ((rms: number) => void) | null = null;
+  #reconnects = 0;
+  /** Recent mic audio kept while idle, so a reply that starts during the handover is not clipped. */
+  #preroll: Int16Array[] = [];
+  #prerollSamples = 0;
 
   constructor(private readonly options: RealtimeOptions) {}
 
@@ -68,6 +77,8 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
         if (settled) return;
         settled = true;
         this.#sending = false;
+        // Reset the server's VAD state so the next listen does not inherit a half-open turn.
+        this.#send({ type: 'input_audio_buffer.clear' });
         this.#onLevel = null;
         this.#listeners.delete(onEvent);
         signal.removeEventListener('abort', onAbort);
@@ -75,15 +86,13 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
         if (error) reject(error);
         else resolve(value);
       };
-      const onAbort = () => {
-        this.#send({ type: 'input_audio_buffer.clear' });
-        settle(null);
-      };
+      const onAbort = () => settle(null);
       const noSpeechTimer = setTimeout(() => {
         if (speechStartedAt === null && !partial) settle(null);
       }, this.options.getNoSpeechTimeoutMs());
 
       const onEvent = (event: RealtimeEvent) => {
+        this.#log(event.type, event.type.includes('delta') ? event.delta : event.transcript ?? event.error ?? '');
         switch (event.type) {
           case 'input_audio_buffer.speech_started':
             speechStartedAt = performance.now();
@@ -98,7 +107,10 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
             break;
           case 'conversation.item.input_audio_transcription.completed': {
             const text = (event.transcript ?? partial).trim();
-            if (!text || speechMs < MIN_SPEECH_MS || isLikelyHallucination({ text }, this.options.getLanguage())) {
+            // `completed` can land before `speech_stopped`; count speech still in progress.
+            // The server's own VAD gated this audio, so short answers ("yes", "do that") are real.
+            if (!text || isLikelyHallucination({ text }, this.options.getLanguage(), false)) {
+              this.#log('dropped transcript', { text });
               // Noise or a phantom phrase: keep listening within the same call.
               partial = '';
               speechMs = 0;
@@ -108,6 +120,10 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
             settle({ text });
             break;
           }
+          case 'claudian.reconnected':
+            partial = '';
+            callbacks.onPartial?.('');
+            break;
           case 'conversation.item.input_audio_transcription.failed':
             settle(null, new Error(event.error?.message ?? 'Transcription failed'));
             break;
@@ -121,7 +137,9 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
 
       signal.addEventListener('abort', onAbort, { once: true });
       this.#listeners.add(onEvent);
+      this.#flushPreroll();
       this.#sending = true;
+      this.#log('listening', { socket: this.#socket?.readyState, context: this.#context?.state });
     });
   }
 
@@ -160,6 +178,8 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
         this.#configure();
         resolve();
       };
+      // A healthy connection for a while earns the reconnect budget back.
+      setTimeout(() => { if (this.#socket === socket) this.#reconnects = 0; }, 60000);
       socket.onmessage = message => {
         try {
           const event = JSON.parse(String(message.data)) as RealtimeEvent;
@@ -172,7 +192,22 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
       socket.onclose = event => {
         this.#socket = null;
         this.#ready = null;
-        if (!opened) reject(new Error(`Realtime socket closed before opening (${event.code}).`));
+        if (!opened) { reject(new Error(`Realtime socket closed before opening (${event.code}).`)); return; }
+        this.#log('socket closed', event.code);
+        // Sessions have a fixed lifetime and idle timeouts. If we were mid-listen, reconnect
+        // transparently; the in-flight utterance restarts rather than ending the voice session.
+        if (this.#sending && this.#reconnects < MAX_RECONNECTS) {
+          this.#reconnects += 1;
+          void this.#ensureConnected().then(() => {
+            this.#log('reconnected');
+            const resumed: RealtimeEvent = { type: 'claudian.reconnected' };
+            for (const listener of this.#listeners) listener(resumed);
+          }).catch(error => {
+            const failed: RealtimeEvent = { type: 'error', error: { message: `Transcription connection lost (${error instanceof Error ? error.message : String(error)})` } };
+            for (const listener of this.#listeners) listener(failed);
+          });
+          return;
+        }
         const closed: RealtimeEvent = { type: 'error', error: { message: `Transcription connection closed (${event.code})` } };
         if (this.#sending) for (const listener of this.#listeners) listener(closed);
       };
@@ -212,6 +247,20 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
     this.#stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     });
+    // Unplugging or switching input devices ends the track; drop our graph so the next listen rebuilds it.
+    for (const track of this.#stream.getTracks()) {
+      track.onended = () => {
+        this.#log('microphone track ended; will reacquire');
+        this.#processor?.disconnect();
+        this.#source?.disconnect();
+        this.#processor = null;
+        this.#source = null;
+        void this.#context?.close().catch(() => undefined);
+        this.#context = null;
+        this.#stream = null;
+        if (this.#sending) void this.#ensureMicrophone().catch(() => undefined);
+      };
+    }
     const context = new AudioContext();
     this.#context = context;
     this.#source = context.createMediaStreamSource(this.#stream);
@@ -220,8 +269,16 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
     processor.onaudioprocess = event => {
       const input = event.inputBuffer.getChannelData(0);
       this.#onLevel?.(rootMeanSquare(input));
-      if (!this.#sending || !this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
       const pcm = floatToPcm16(resample(input, context.sampleRate, TARGET_RATE));
+      if (!this.#sending) {
+        this.#preroll.push(pcm);
+        this.#prerollSamples += pcm.length;
+        while (this.#prerollSamples > PREROLL_SAMPLES && this.#preroll.length > 1) {
+          this.#prerollSamples -= this.#preroll.shift()?.length ?? 0;
+        }
+        return;
+      }
+      if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
       this.#send({ type: 'input_audio_buffer.append', audio: pcm16ToBase64(pcm) });
     };
     this.#source.connect(processor);
@@ -232,7 +289,30 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
     this.#processor = processor;
   }
 
+  /** Send the tail of what the mic heard while we were not listening, then start live. */
+  #flushPreroll(): void {
+    if (this.#preroll.length === 0) return;
+    // Keep only the most recent PREROLL_SEND_MS; older audio is the agent's own voice.
+    let budget = Math.round(TARGET_RATE * PREROLL_SEND_MS / 1000);
+    const chunks: Int16Array[] = [];
+    for (let index = this.#preroll.length - 1; index >= 0 && budget > 0; index -= 1) {
+      const chunk = this.#preroll[index];
+      if (!chunk) continue;
+      chunks.unshift(chunk.length > budget ? chunk.subarray(chunk.length - budget) : chunk);
+      budget -= chunk.length;
+    }
+    for (const chunk of chunks) this.#send({ type: 'input_audio_buffer.append', audio: pcm16ToBase64(chunk) });
+    this.#log('preroll flushed', { ms: Math.round(chunks.reduce((sum, c) => sum + c.length, 0) / TARGET_RATE * 1000) });
+    this.#preroll = [];
+    this.#prerollSamples = 0;
+  }
+
+  #log(message: string, detail?: unknown): void {
+    if (this.options.isDebug?.()) console.debug(`[claudian-voice] ${message}`, detail ?? '');
+  }
+
   #send(payload: Record<string, unknown>): void {
+    if (payload.type !== 'input_audio_buffer.append') this.#log(`send ${String(payload.type)}`);
     if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(JSON.stringify(payload));
   }
 }

@@ -81,6 +81,22 @@ export class SentenceCursor {
     return out;
   }
 
+  /**
+   * For the very first utterance: if the opening sentence is running long, take what is
+   * complete up to a clause break so speech can start without waiting for the full stop.
+   */
+  takeLeadingClause(minChars: number): string | null {
+    const pending = this.#pending;
+    if (pending.length < minChars) return null;
+    const match = new RegExp(`^([\\s\\S]{${minChars},}?[,;:])\\s`).exec(pending.slice(0, Math.max(minChars, 220)) + ' ');
+    if (!match) return null;
+    const clause = match[1] ?? '';
+    const rest = pending.slice(clause.length).replace(/^\s+/, '');
+    this.#spokenChars += pending.length - rest.length;
+    this.#pending = rest;
+    return clause.trim() || null;
+  }
+
   /** The turn ended: whatever is left is a sentence now. */
   flush(): string[] {
     const rest = this.#pending.trim();

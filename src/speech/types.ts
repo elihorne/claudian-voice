@@ -29,4 +29,6 @@ export interface Speaker {
   readonly isSpeaking: boolean;
   /** Current output RMS when the speaker plays through WebAudio; undefined when unknown. */
   getOutputLevel?(): number | undefined;
+  /** Release audio resources. */
+  dispose?(): void;
 }

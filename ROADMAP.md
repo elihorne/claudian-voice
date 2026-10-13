@@ -21,6 +21,10 @@ Four rules follow from that. Anything that can be done inside Obsidian in millis
 - Echo-aware barge-in (off by default; headphones recommended).
 - Spoken progress while the agent works silently; sound cues on start, listen, stop, error.
 - Bridge abstraction: runs on the interim tab-handle API today and the maintainer's session API when it ships.
+- Handover without clipping: zero gap after a reply, 700ms mic pre-roll sent ahead of live audio, non-blocking cue.
+- First words sooner: first sentence spoken as soon as it completes, long openers start at a clause break.
+- Resilience: Realtime socket reconnects mid-listen, mic reacquired on device change, one shared AudioContext.
+- Idle auto-stop (cost guard), cached audio for fixed phrases, language-code normalisation, settings migrations.
 
 ## Next
 

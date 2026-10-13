@@ -1,7 +1,7 @@
 import { type Editor, Notice, Plugin, setIcon } from 'obsidian';
 
 import { describeBridgeFailure, resolveClaudianBridge } from './claudian/api';
-import { ClaudianVoiceSettingTab, type ClaudianVoiceSettings, DEFAULT_SETTINGS } from './settings';
+import { ClaudianVoiceSettingTab, type ClaudianVoiceSettings, DEFAULT_SETTINGS, normalizeLanguage } from './settings';
 import { BargeInMonitor } from './speech/BargeInMonitor';
 import { Earcons } from './speech/Earcons';
 import { GlossaryStore } from './speech/GlossaryStore';
@@ -117,7 +117,10 @@ export default class ClaudianVoicePlugin extends Plugin {
 
   onunload(): void {
     this.stopSession();
+    this.#reader?.stop();
     this.#indicator?.unmount();
+    this.#sharedSpeaker?.speaker.dispose?.();
+    this.#sharedSpeaker = null;
   }
 
   toggleConversation(): void {
@@ -171,6 +174,7 @@ export default class ClaudianVoicePlugin extends Plugin {
       getTurnGapMs: () => this.settings.turnGapMs,
       onState: state => this.#renderState(state),
       cue: kind => this.#earcons.play(kind),
+      getIdleStopMs: () => this.settings.idleStopSeconds * 1000,
       getProgressPhrases: () => (this.settings.progressCues
         ? { first: 'Working on it.', again: 'Still working.', firstAfterMs: 5000, everyMs: 20000 }
         : null),
@@ -197,6 +201,7 @@ export default class ClaudianVoicePlugin extends Plugin {
 
   /** Speaks a short sample with the current voice settings; a new preview cuts off the previous one. */
   previewVoice(text = 'Hi Eli. This is how I will sound when I read replies back to you.'): void {
+    if (this.#session?.isRunning) { new Notice('Stop the voice session to preview voices.'); return; }
     this.#preview?.cancel();
     const speaker = this.#createSpeaker();
     if (!speaker) {
@@ -301,7 +306,22 @@ export default class ClaudianVoicePlugin extends Plugin {
     return `Selected text:\n${quoted}\n\n`;
   }
 
+  /**
+   * One speaker for the plugin's lifetime. Each OpenAISpeaker owns an AudioContext and Chromium
+   * caps a page at a handful of live contexts, so creating one per session eventually goes silent.
+   */
+  #sharedSpeaker: { engine: string; speaker: Speaker } | null = null;
+
   #createSpeaker(): Speaker | null {
+    const engine = this.settings.ttsEngine;
+    if (this.#sharedSpeaker?.engine === engine) return this.#sharedSpeaker.speaker;
+    this.#sharedSpeaker?.speaker.dispose?.();
+    const speaker = this.#buildSpeaker();
+    this.#sharedSpeaker = speaker ? { engine, speaker } : null;
+    return speaker;
+  }
+
+  #buildSpeaker(): Speaker | null {
     if (this.settings.ttsEngine === 'openai') {
       if (!this.settings.whisperApiKey.trim() && this.settings.openaiTtsEndpoint.includes('openai.com')) return null;
       return new OpenAISpeaker({
@@ -311,6 +331,7 @@ export default class ClaudianVoicePlugin extends Plugin {
         getVoice: () => this.settings.openaiVoice,
         getSpeed: () => this.settings.ttsRate,
         onError: error => new Notice(`Claudian Voice: ${error.message}`, 8000),
+        isDebug: () => this.settings.debug,
       });
     }
     if (!SynthesisSpeaker.isSupported()) return null;
@@ -336,6 +357,7 @@ export default class ClaudianVoicePlugin extends Plugin {
         getVadThreshold: () => this.settings.realtimeVadThreshold,
         useSemanticVad: () => this.settings.realtimeSemanticVad,
         getEagerness: () => this.settings.realtimeEagerness,
+        isDebug: () => this.settings.debug,
       });
     }
     return new WhisperHttpRecognizer({
@@ -366,6 +388,20 @@ export default class ClaudianVoicePlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = { ...DEFAULT_SETTINGS, ...((await this.loadData()) as Partial<ClaudianVoiceSettings> | null) };
+    this.settings.language = normalizeLanguage(this.settings.language);
+    await this.#migrateSettings((await this.loadData()) as Partial<ClaudianVoiceSettings> | null);
+  }
+
+  /** Early builds persisted gpt-4o-mini-tts as the speech model; it drifts between sentences, so move to tts-1 once. */
+  async #migrateSettings(stored: Partial<ClaudianVoiceSettings> | null): Promise<void> {
+    const version = stored?.settingsVersion ?? 1;
+    if (version < 2 && this.settings.openaiTtsModel === 'gpt-4o-mini-tts') this.settings.openaiTtsModel = 'tts-1';
+    // v3: the post-reply gap clipped quick follow-ups; the recogniser now keeps a pre-roll instead.
+    if (version < 3 && this.settings.turnGapMs === 400) this.settings.turnGapMs = 0;
+    if (version < DEFAULT_SETTINGS.settingsVersion) {
+      this.settings.settingsVersion = DEFAULT_SETTINGS.settingsVersion;
+      await this.saveSettings();
+    }
   }
 
   async saveSettings(): Promise<void> {

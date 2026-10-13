@@ -44,6 +44,10 @@ export class SynthesisSpeaker implements Speaker {
     });
   }
 
+  dispose(): void {
+    this.cancel();
+  }
+
   cancel(): void {
     if (!SynthesisSpeaker.isSupported()) return;
     // cancel() fires onerror/onend for queued utterances, which releases the counters.

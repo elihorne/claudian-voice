@@ -44,6 +44,12 @@ export interface ClaudianVoiceSettings {
   progressCues: boolean;
   /** Prefix voice prompts with a link to the active note when it changed since the last voice turn. */
   includeActiveNote: boolean;
+  /** End a session after this many seconds with nothing heard. 0 keeps listening forever. */
+  idleStopSeconds: number;
+  /** Console logging for diagnosing transcription problems. */
+  debug: boolean;
+  /** Bumped when stored defaults need migrating. */
+  settingsVersion: number;
   ttsVoice: string;
   ttsRate: number;
 }
@@ -70,17 +76,26 @@ export const DEFAULT_SETTINGS: ClaudianVoiceSettings = {
   autoSubmit: true,
   speakReplies: true,
   conversationMode: true,
-  turnGapMs: 400,
+  turnGapMs: 0,
   bargeIn: false,
   bargeInHoldMs: 500,
   soundCues: true,
   briefReplies: true,
   progressCues: true,
   includeActiveNote: true,
+  debug: false,
+  idleStopSeconds: 45,
+  settingsVersion: 3,
   promptSuffix: '(Voice chat from here on: keep replies short and conversational.)',
   ttsVoice: '',
   ttsRate: 1,
 };
+
+/** Accepts `en`, `"en"`, `en-US`, ` EN ` and returns the lowercase ISO-639-1 code the engines expect. */
+export function normalizeLanguage(value: string): string {
+  const stripped = value.replace(/["'`\s]/g, '').toLowerCase();
+  return stripped.split(/[-_]/)[0] ?? '';
+}
 
 export class ClaudianVoiceSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: ClaudianVoicePlugin) {
@@ -164,7 +179,7 @@ export class ClaudianVoiceSettingTab extends PluginSettingTab {
       .setName('Language')
       .setDesc('Optional hint such as "en", "de", or "sv". Empty lets the engine detect; mixed-language speakers usually get better results leaving this empty.')
       .addText(text => text.setPlaceholder('auto').setValue(settings.language)
-        .onChange(async value => { settings.language = value.trim(); await save(); }));
+        .onChange(async value => { settings.language = normalizeLanguage(value); await save(); }));
 
     new Setting(containerEl)
       .setName('End of utterance')
@@ -239,6 +254,12 @@ export class ClaudianVoiceSettingTab extends PluginSettingTab {
     }
 
     new Setting(containerEl)
+      .setName('Stop when idle')
+      .setDesc('End the session after this many seconds with nothing heard. Streaming transcription is billed while the mic is open, so this is also a cost guard. 0 keeps listening until you stop it.')
+      .addSlider(slider => slider.setLimits(0, 180, 15).setDynamicTooltip().setValue(settings.idleStopSeconds)
+        .onChange(async value => { settings.idleStopSeconds = value; await save(); }));
+
+    new Setting(containerEl)
       .setName('Spoken progress')
       .setDesc('When the agent is busy with tools and has not written anything for a few seconds, say "Working on it", then "Still working" every twenty seconds.')
       .addToggle(toggle => toggle.setValue(settings.progressCues)
@@ -249,6 +270,12 @@ export class ClaudianVoiceSettingTab extends PluginSettingTab {
       .setDesc('A rising chime when the session starts, a tick each time it starts listening again, a falling chime on stop.')
       .addToggle(toggle => toggle.setValue(settings.soundCues)
         .onChange(async value => { settings.soundCues = value; await save(); }));
+
+    new Setting(containerEl)
+      .setName('Debug logging')
+      .setDesc('Write transcription and session events to the developer console (⌘⌥I).')
+      .addToggle(toggle => toggle.setValue(settings.debug)
+        .onChange(async value => { settings.debug = value; await save(); }));
 
     new Setting(containerEl).setName('Voice').setHeading();
 

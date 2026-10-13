@@ -165,6 +165,14 @@ const AMBIENT_MARGIN = 2.5;
 const MIN_VOICED_MS = 400;
 
 /** Whisper's signature outputs on silence, in the languages it most often drifts into. */
+/** Non-English subtitle artefacts only; safe to apply to any engine. */
+const PHANTOM_PHRASES_LENIENT = [
+  /thank(s| you) for watching/i,
+  /시청.*감사/u,
+  /ご視聴ありがとう/u,
+  /^evet\.?$/i,
+];
+
 const PHANTOM_PHRASES = [
   /thank(s| you) for watching/i,
   /subscribe/i,
@@ -176,9 +184,15 @@ const PHANTOM_PHRASES = [
   /^thank you\.?$/i,
 ];
 
-export function isLikelyHallucination(payload: VerboseTranscription, languageHint: string): boolean {
+/**
+ * Whisper on near-silence produces phantom phrases; `strict` also rejects very short English
+ * fragments, which is right for Whisper's record-then-upload flow but wrong for a streaming
+ * engine with its own voice detector, where "yes" and "thanks" are real follow-ups.
+ */
+export function isLikelyHallucination(payload: VerboseTranscription, languageHint: string, strict = true): boolean {
   const text = typeof payload.text === 'string' ? payload.text.trim() : '';
-  if (PHANTOM_PHRASES.some(pattern => pattern.test(text))) return true;
+  const phantoms = strict ? PHANTOM_PHRASES : PHANTOM_PHRASES_LENIENT;
+  if (phantoms.some(pattern => pattern.test(text))) return true;
   const segments = payload.segments ?? [];
   if (segments.length > 0) {
     const confidentSpeech = segments.some(segment =>

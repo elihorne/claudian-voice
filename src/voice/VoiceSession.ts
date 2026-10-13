@@ -44,12 +44,16 @@ export interface VoiceSessionDeps {
   cue?: (kind: 'start' | 'listen' | 'stop' | 'error') => Promise<void>;
   /** Spoken while the agent works without producing text; null disables. */
   getProgressPhrases?: () => { first: string; again: string; firstAfterMs: number; everyMs: number } | null;
+  /** End the session after this long with nothing heard (streaming audio is billed while idle). 0 disables. */
+  getIdleStopMs?: () => number;
 }
 
 type TurnOutcome = 'turn-complete' | 'nothing-heard' | 'stopped';
 
 /** Hold speech until at least this much text has accumulated, unless the turn is over. */
 const MIN_UTTERANCE_CHARS = 60;
+/** Start the first utterance at a clause break once this much of a long opening sentence exists. */
+const FIRST_CLAUSE_CHARS = 50;
 
 /**
  * The hands-free loop: listen, send to the active Claudian session, speak the reply, then
@@ -80,13 +84,21 @@ export class VoiceSession {
     if (this.#running) return;
     this.#running = true;
     let firstTurn = true;
+    let idleSince = performance.now();
     try {
       await this.deps.cue?.('start');
       do {
-        if (!firstTurn && this.#running) await this.deps.cue?.('listen');
+        // The tick plays over the start of listening; waiting for it would clip a quick reply.
+        if (!firstTurn && this.#running) void this.deps.cue?.('listen');
         firstTurn = false;
         const outcome = await this.#turn();
         if (outcome === 'stopped') break;
+        if (outcome === 'nothing-heard') {
+          const idleStopMs = this.deps.getIdleStopMs?.() ?? 0;
+          if (idleStopMs > 0 && performance.now() - idleSince > idleStopMs) break;
+        } else {
+          idleSince = performance.now();
+        }
         if (outcome === 'turn-complete' && this.deps.isConversationMode()) {
           await sleep(this.deps.getTurnGapMs(), this.#abort?.signal);
         }
@@ -206,6 +218,7 @@ export class VoiceSession {
       spoken.push(speaker.speak(held));
       held = '';
     };
+    let spokenAnything = false;
     const enqueue = (sentences: string[], final = false) => {
       if (signal.aborted) return;
       if (sentences.length > 0) {
@@ -213,7 +226,18 @@ export class VoiceSession {
         held = [held, ...sentences].filter(Boolean).join(' ');
         if (this.#state.phase !== 'speaking') this.#setState({ phase: 'speaking', sessionId });
       }
-      if (held.length >= MIN_UTTERANCE_CHARS || final) flushHeld();
+      // The first words go out as soon as one sentence is complete; later chunks are batched a little.
+      const threshold = spokenAnything ? MIN_UTTERANCE_CHARS : 1;
+      if (held.length >= threshold || final) {
+        if (held) spokenAnything = true;
+        flushHeld();
+      }
+    };
+    // If the opening sentence runs long, start speaking at a clause break instead of waiting for it.
+    const earlyStart = () => {
+      if (spokenAnything || signal.aborted) return;
+      const clause = cursor.takeLeadingClause(FIRST_CLAUSE_CHARS);
+      if (clause) enqueue([clause]);
     };
 
     // Long tool-heavy turns are silent until the agent writes; say so rather than leave dead air.
@@ -236,7 +260,7 @@ export class VoiceSession {
     const result = await Promise.race([
       bridge.send(sessionId, prompt, {
         signal,
-        onPartial: speak && bridge.supportsStreaming ? partial => enqueue(cursor.push(partial)) : undefined,
+        onPartial: speak && bridge.supportsStreaming ? partial => { enqueue(cursor.push(partial)); earlyStart(); } : undefined,
       }),
       aborted,
     ]);

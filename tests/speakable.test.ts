@@ -67,3 +67,21 @@ describe('isCancelPhrase', () => {
     assert.equal(isCancelPhrase('never mind the file, rename it'), false);
   });
 });
+
+describe('SentenceCursor.takeLeadingClause', () => {
+  it('returns the opening clause of a long unfinished sentence and keeps the rest pending', () => {
+    const cursor = new SentenceCursor();
+    cursor.push('Looking at the three meetings from today, the first one with the design leads covered the proposal and');
+    const clause = cursor.takeLeadingClause(20);
+    assert.equal(clause, 'Looking at the three meetings from today,');
+    assert.deepEqual(cursor.flush(), ['the first one with the design leads covered the proposal and']);
+  });
+
+  it('returns null when the pending text is short or has no clause break', () => {
+    const cursor = new SentenceCursor();
+    cursor.push('Short start');
+    assert.equal(cursor.takeLeadingClause(20), null);
+    cursor.push('A much longer opening without any clause break at all in it yet');
+    assert.equal(cursor.takeLeadingClause(20), null);
+  });
+});

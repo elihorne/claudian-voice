@@ -10,12 +10,15 @@ export interface OpenAISpeakerOptions {
   getSpeed: () => number;
   /** Synthesis failures are reported here instead of being dropped as silence. */
   onError: (error: Error) => void;
+  isDebug?: () => boolean;
 }
 
 /** OpenAI's `pcm` response format: 24kHz, mono, signed 16-bit little-endian. */
 const PCM_RATE = 24000;
 /** Schedule a little ahead so back-to-back chunks never leave a gap. */
 const LEAD_SECONDS = 0.05;
+/** Phrases up to this length are cached after first synthesis. */
+const PHRASE_CACHE_MAX_CHARS = 32;
 
 interface QueuedUtterance {
   text: string;
@@ -49,6 +52,8 @@ export class OpenAISpeaker implements Speaker {
   #active = new Set<AudioBufferSourceNode>();
   #generation = 0;
   #streamingSupported: boolean | null = null;
+  /** Audio for short fixed phrases ("Noted.", "Working on it."), keyed by voice+model+text. */
+  #phraseCache = new Map<string, Float32Array<ArrayBuffer>[]>();
 
   constructor(private readonly options: OpenAISpeakerOptions) {}
 
@@ -73,7 +78,16 @@ export class OpenAISpeaker implements Speaker {
     if (!text) return Promise.resolve();
     const generation = this.#generation;
     const stream = createPcmStream();
-    void this.#fetchInto(text, stream, generation);
+    const cacheKey = text.length <= PHRASE_CACHE_MAX_CHARS ? `${this.options.getModel()}|${this.options.getVoice()}|${this.options.getSpeed()}|${text}` : null;
+    const cached = cacheKey ? this.#phraseCache.get(cacheKey) : undefined;
+    if (cached) {
+      stream.chunks.push(...cached);
+      stream.done = true;
+    } else {
+      void this.#fetchInto(text, stream, generation).then(() => {
+        if (cacheKey && !stream.error && stream.chunks.length > 0) this.#phraseCache.set(cacheKey, [...stream.chunks]);
+      });
+    }
     return new Promise<void>(resolve => {
       this.#queue.push({ text, stream, resolve });
       void this.#drain();
@@ -89,6 +103,14 @@ export class OpenAISpeaker implements Speaker {
     }
     this.#active.clear();
     this.#playing = false;
+  }
+
+  dispose(): void {
+    this.cancel();
+    this.#analyser?.disconnect();
+    this.#analyser = null;
+    void this.#context?.close().catch(() => undefined);
+    this.#context = null;
   }
 
   async #drain(): Promise<void> {
@@ -149,13 +171,16 @@ export class OpenAISpeaker implements Speaker {
     try {
       if (this.#streamingSupported !== false) {
         try {
+          const started = performance.now();
           await this.#fetchStreaming(text, stream, generation);
+          if (this.#streamingSupported !== true) this.#log('streaming TTS works', { firstRequestMs: Math.round(performance.now() - started) });
           this.#streamingSupported = true;
           return;
         } catch (error) {
           if (this.#streamingSupported === true) throw error;
           // First attempt failed before any audio: assume fetch is blocked here and fall back for good.
           if (stream.chunks.length > 0) throw error;
+          this.#log('streaming TTS unavailable, falling back to whole-file requests', error instanceof Error ? error.message : error);
           this.#streamingSupported = false;
         }
       }
@@ -205,6 +230,10 @@ export class OpenAISpeaker implements Speaker {
     const bytes = new Uint8Array(response.arrayBuffer);
     stream.chunks.push(pcm16BytesToFloat(bytes.subarray(0, bytes.length - (bytes.length % 2))));
     stream.notify();
+  }
+
+  #log(message: string, detail?: unknown): void {
+    if (this.options.isDebug?.()) console.debug(`[claudian-voice] ${message}`, detail ?? '');
   }
 
   #headers(): Record<string, string> {
