@@ -35,6 +35,8 @@ export interface ClaudianSessionApi {
   getActiveSessionId(): string | null;
   send(sessionId: string, text: string): Promise<ImmediateResult | AcceptedResult>;
   cancel?(sessionId: string): void;
+  /** #1623 shipped stop-the-turn as `mode: 'interrupt'` on send; a dedicated method may also appear. */
+  interrupt?(sessionId: string): void | Promise<unknown>;
   readSession?(sessionId: string, options?: { beforeTurn?: number }): Promise<SessionTranscript>;
   /** Subscribe to turn lifecycle; returns an unsubscribe. Optional, polling covers its absence. */
   onTurnEnded?(listener: (event: { sessionId: string }) => void): () => void;
@@ -65,11 +67,12 @@ export class SessionApiBridge implements ClaudianBridge {
   }
 
   get canCancel(): boolean {
-    return typeof this.api.cancel === 'function';
+    return typeof this.api.cancel === 'function' || typeof this.api.interrupt === 'function';
   }
 
   cancel(sessionId: string): void {
-    this.api.cancel?.(sessionId);
+    if (this.api.cancel) { this.api.cancel(sessionId); return; }
+    void this.api.interrupt?.(sessionId);
   }
 
   async send(sessionId: string, text: string, options: SendOptions): Promise<TurnResult> {
@@ -126,7 +129,8 @@ export class SessionApiBridge implements ClaudianBridge {
       const poll = async () => {
         if (settled) return;
         const transcript = await this.#safeRead(sessionId);
-        const idle = transcript?.status ? !/running|streaming|busy/i.test(transcript.status) : true;
+        // #1623 statuses: 'idle' | 'running' | 'awaiting-user'. Only idle means the reply is final.
+        const idle = transcript?.status ? transcript.status === 'idle' : true;
         if (transcript && transcript.totalTurns > turnsBefore && idle) return finish(true);
         if (performance.now() - started > POLL_TIMEOUT_MS) return finish(false);
         timer = setTimeout(() => { void poll(); }, POLL_MS);
@@ -149,19 +153,19 @@ function isImmediate(result: ImmediateResult | AcceptedResult): result is Immedi
 }
 
 /**
- * `read_session` content is Markdown of each turn's user prompt and final reply. The exact
- * delimiters are not fixed yet, so take the text after the last prompt marker we recognise,
- * and fall back to the final paragraph block when none is found.
+ * `read_session` content (#1623, formatSessionSnapshot) is `## T<n> user` / `## T<n> assistant`
+ * blocks, latest turns last. Take the text after the last assistant marker; tolerate the
+ * unnumbered variants in case the format shifts, and fall back to the final paragraph.
  */
 export function latestReply(content: string): string {
-  const markers = [/^#{1,4}\s*(assistant|reply|response)\b.*$/gim, /^\*\*(assistant|reply|response)\*\*:?\s*$/gim];
+  const markers = [/^#{1,4}\s*(?:T\d+\s+)?(assistant|reply|response)\b.*$/gim, /^\*\*(assistant|reply|response)\*\*:?\s*$/gim];
   for (const marker of markers) {
     let last: RegExpExecArray | null = null;
     for (const match of content.matchAll(marker)) last = match;
     if (last && last.index !== undefined) {
       const after = content.slice(last.index + last[0].length).trim();
       // Stop at the next turn's prompt marker if one follows.
-      const next = /^#{1,4}\s*(user|prompt)\b.*$/im.exec(after);
+      const next = /^#{1,4}\s*(?:T\d+\s+)?(user|prompt)\b.*$/im.exec(after);
       return (next && next.index !== undefined ? after.slice(0, next.index) : after).trim();
     }
   }

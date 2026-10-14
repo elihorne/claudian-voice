@@ -48,11 +48,18 @@ Four rules follow from that. Anything that can be done inside Obsidian in millis
 
 **Presence and privacy.** Auto-stop after idle, never record when Obsidian is not focused (optional), a mute word, and cost display since this bills two APIs.
 
+## What #1623 changed (merged 2026-10-14)
+
+Cross-session messaging landed in Claudian core: `send` with modes `queue`, `steer` (joins a running turn) and `interrupt` (stops it like the user's Stop), `read_session` returning `## T<n> user` / `## T<n> assistant` blocks, and session status `idle | running | awaiting-user`. It is agent-to-agent only for now; the outside-client API is the follow-up. The bridge already speaks this shape.
+
+One thing to raise when the API arrives: a mailbox message shows in the recipient as "From session: <title>", never enters the composer and carries no editor selection. For voice, the prompt should be the user's own message with the normal selection capture, as the interim tab-handle shim does today.
+
 ## What we will ask of Claudian
 
 Kept small, and mostly things the planned multi-session work needs anyway. To be posted as one grouped request once the experimental session API exists and this plugin runs against it.
 
-- `cancel(sessionId)` so barge-in can cut a turn; the pending `send` resolves `interrupted`.
+- Outside-client access to `send` with `mode: 'interrupt'` (now in core) so barge-in can cut a turn.
+- Sends from a companion treated as user input (user message, selection capture), not agent mail.
 - List and switch sessions, for session verbs.
 - An inline-edit entry point taking an instruction string, replacing the DOM-driven `InlineEditDriver`.
 - Pending-interaction events with an answer method, for approvals by voice.
