@@ -13,7 +13,7 @@
  * method names are experimental; `pick()` is the only place that knows them.
  */
 import type { ClaudianBridge, SendOptions, TurnResult } from './bridge';
-import { clearTimer, setTimer } from '../timers';
+import { clearTimer, setTimer, type TimerId } from '../timers';
 
 export const SUPPORTED_SESSION_API_VERSION = 1;
 
@@ -110,12 +110,12 @@ export class SessionApiBridge implements ClaudianBridge {
     return new Promise<boolean>(resolve => {
       let settled = false;
       let unsubscribe: (() => void) | null = null;
-      let timer: ReturnType<typeof setTimeout> | null = null;
+      let timer: TimerId | null = null;
       const finish = (value: boolean) => {
         if (settled) return;
         settled = true;
         unsubscribe?.();
-        if (timer) clearTimer(timer);
+        clearTimer(timer);
         signal.removeEventListener('abort', onAbort);
         resolve(value);
       };

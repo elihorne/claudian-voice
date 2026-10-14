@@ -2,14 +2,22 @@
  * Timers bound to the window when one exists (Obsidian popout windows have their own), with
  * a fallback to the globals so the pure-logic modules run under node for tests.
  */
-const host: Pick<Window, 'setTimeout' | 'clearTimeout'> =
-  typeof window !== 'undefined' ? window : { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout } as unknown as Window;
-
-export function setTimer(callback: () => void, ms: number): number {
-  return host.setTimeout(callback, ms) as unknown as number;
+interface TimerHost {
+  setTimeout(callback: () => void, ms: number): unknown;
+  clearTimeout(id: unknown): void;
 }
 
-export function clearTimer(id: number | null | undefined): void {
+const host: TimerHost = typeof window !== 'undefined'
+  ? { setTimeout: (cb, ms) => window.setTimeout(cb, ms), clearTimeout: id => window.clearTimeout(id as number) }
+  : { setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms), clearTimeout: id => globalThis.clearTimeout(id as ReturnType<typeof setTimeout>) };
+
+export type TimerId = unknown;
+
+export function setTimer(callback: () => void, ms: number): TimerId {
+  return host.setTimeout(callback, ms);
+}
+
+export function clearTimer(id: TimerId | null | undefined): void {
   if (id != null) host.clearTimeout(id);
 }
 

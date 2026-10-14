@@ -2,7 +2,7 @@ import type { ClaudianBridge, TurnResult } from '../claudian/bridge';
 import type { Speaker, SpeechRecognizer } from '../speech/types';
 import { type LocalVerb, parseLocalVerb } from './LocalVerbs';
 import { isCancelPhrase, SentenceCursor } from './speakable';
-import { clearTimer, setTimer } from '../timers';
+import { clearTimer, setTimer, type TimerId } from '../timers';
 
 /** Watches the mic while the agent speaks; resolves true when the user talks over it. */
 export interface BargeInWatcher {
@@ -243,7 +243,7 @@ export class VoiceSession {
 
     // Long tool-heavy turns are silent until the agent writes; say so rather than leave dead air.
     const progress = speak ? this.deps.getProgressPhrases?.() ?? null : null;
-    let progressTimer: ReturnType<typeof setTimeout> | null = null;
+    let progressTimer: TimerId | null = null;
     const scheduleProgress = (delay: number, phrase: string) => {
       if (!progress) return;
       progressTimer = setTimer(() => {
@@ -253,7 +253,7 @@ export class VoiceSession {
       }, delay);
     };
     scheduleProgress(progress?.firstAfterMs ?? 0, progress?.first ?? '');
-    const clearProgress = () => { if (progressTimer) clearTimer(progressTimer); progressTimer = null; };
+    const clearProgress = () => { clearTimer(progressTimer); progressTimer = null; };
 
     const aborted = new Promise<TurnResult>(resolve => {
       signal.addEventListener('abort', () => resolve({ text: '', outcome: 'interrupted' }), { once: true });
