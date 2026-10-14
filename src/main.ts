@@ -14,7 +14,8 @@ import { WhisperHttpRecognizer } from './speech/WhisperHttpRecognizer';
 import { InlineEditDriver } from './obsidian/InlineEditDriver';
 import { labelFor, VoiceIndicator } from './ui/VoiceIndicator';
 import { HoldToTalk } from './voice/HoldToTalk';
-import { appendToDailyNote, type LocalVerb } from './voice/LocalVerbs';
+import { appendToDailyNote } from './obsidian/dailyNote';
+import type { LocalVerb } from './voice/LocalVerbs';
 import { ReadAloud } from './voice/ReadAloud';
 import { VoiceSession, type VoiceState } from './voice/VoiceSession';
 
@@ -249,6 +250,10 @@ export default class ClaudianVoicePlugin extends Plugin {
 
   async readAloud(): Promise<boolean> {
     if (this.#reader?.isReading) { this.#reader.stop(); return true; }
+    if (this.#session?.isRunning && this.#session.state.phase !== 'listening') {
+      new Notice('Wait for the reply to finish, or stop the voice session, before reading a note aloud.');
+      return false;
+    }
     const speaker = this.#createSpeaker();
     if (!speaker) { new Notice('No speech engine available.'); return false; }
     this.#reader = new ReadAloud({

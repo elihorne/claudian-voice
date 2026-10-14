@@ -10,14 +10,18 @@ The released Claudian does not yet expose an API for other plugins. The maintain
 
 ```sh
 cd ~/src   # anywhere outside your vault
-git clone -b feat/public-chat-api https://github.com/elihorne/claudian.git
+git clone -b feat/public-chat-api https://github.com/elihorne/claudian.git   # rebased on Claudian 2.3.21
 cd claudian && npm install && npm run build
 cp main.js manifest.json styles.css /path/to/vault/.obsidian/plugins/realclaudian/
 ```
 
-That overwrites the community-installed Claudian's three files (your settings in `data.json` are untouched). Claudian's updater will replace them again on its next release, so keep this folder around. When the maintainer's experimental API is published, the plugin will detect it and this step goes away.
+That overwrites the community-installed Claudian's three files (your settings in `data.json` are untouched). Every Claudian release replaces them again, so keep this folder and re-run the build and copy after each update. When the maintainer's experimental API is published, the plugin will detect it and this step goes away.
 
 ## Install the plugin
+
+The easy way is [BRAT](https://github.com/TfTHacker/obsidian42-brat): install BRAT from the community plugins, then in its settings choose "Add Beta plugin" and enter `elihorne/claudian-voice`. BRAT installs the latest pre-release and keeps it updated.
+
+From source:
 
 ```sh
 cd /path/to/vault/.obsidian/plugins
@@ -25,7 +29,7 @@ git clone https://github.com/elihorne/claudian-voice.git
 cd claudian-voice && npm install && npm run build
 ```
 
-Reload Obsidian, enable **Claudian Voice** under Community plugins, then in its settings paste an OpenAI API key (used for transcription and speech). Set **Language** to your language code (`en`, `sv`, `de`) unless you mix languages, in which case leave it blank.
+Either way: reload Obsidian, enable **Claudian Voice** under Community plugins, then in its settings paste an OpenAI API key (used for transcription and speech). Set **Language** to your language code (`en`, `sv`, `de`) unless you mix languages, in which case leave it blank.
 
 ## What it does
 
@@ -67,7 +71,7 @@ Audio goes only to the transcription endpoint you configure, and only while a se
 cp .env.local.example .env.local   # set OBSIDIAN_VAULT to copy builds into a vault
 npm run dev                         # watch build, copies into the vault on every change
 npm run typecheck
-npm test                            # pure-logic tests: speakable text, sentence cursor, PCM, glossary
+npm test                            # node tests: voice loop with fakes, bridges, speakable text, PCM, glossary, verbs
 ```
 
 For live reload, install the Hot Reload plugin and the `.hotreload` marker in the plugin folder makes it pick up each build.
@@ -92,6 +96,7 @@ src/
 │   ├── BargeInMonitor.ts           # Echo-aware "user is talking over the reply" detector
 │   ├── Earcons.ts                  # Start / listen / stop / error tones
 │   ├── glossary.ts, GlossaryStore.ts
+│   ├── microphone.ts               # getUserMedia with readable permission errors
 │   └── pcm.ts                      # Resample, encode, RMS
 ├── voice/
 │   ├── VoiceSession.ts             # Listen → send → speak → listen loop
@@ -99,7 +104,9 @@ src/
 │   ├── ReadAloud.ts                # Paragraph reader with editor highlighting
 │   ├── LocalVerbs.ts               # Capture to daily note and other agent-free verbs
 │   └── speakable.ts                # Markdown → speech text, sentence cursor, cancel phrases
-├── obsidian/InlineEditDriver.ts    # Drives Claudian's inline-edit modal (until an API exists)
+├── obsidian/
+│   ├── InlineEditDriver.ts         # Drives Claudian's inline-edit modal (until an API exists)
+│   └── dailyNote.ts                # Append to today's daily note through the vault API
 └── ui/VoiceIndicator.ts            # The orb
 ```
 

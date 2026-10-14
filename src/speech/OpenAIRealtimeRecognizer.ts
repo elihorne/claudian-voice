@@ -1,4 +1,5 @@
 import { floatToPcm16, pcm16ToBase64, resample, rootMeanSquare } from './pcm';
+import { openMicrophone } from './microphone';
 import type { ListenCallbacks, RecognitionResult, SpeechRecognizer } from './types';
 import { isLikelyHallucination } from './WhisperHttpRecognizer';
 
@@ -244,9 +245,7 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
 
   async #ensureMicrophone(): Promise<void> {
     if (this.#stream && this.#context && this.#processor) return;
-    this.#stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    });
+    this.#stream = await openMicrophone({ echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 });
     // Unplugging or switching input devices ends the track; drop our graph so the next listen rebuilds it.
     for (const track of this.#stream.getTracks()) {
       track.onended = () => {

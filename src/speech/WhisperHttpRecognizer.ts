@@ -1,5 +1,6 @@
 import { requestUrl } from 'obsidian';
 
+import { openMicrophone } from './microphone';
 import type { ListenCallbacks, RecognitionResult, SpeechRecognizer } from './types';
 
 export interface WhisperHttpOptions {
@@ -47,7 +48,7 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
   }
 
   async #record(signal: AbortSignal, onLevel?: (rms: number) => void): Promise<Blob | null> {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await openMicrophone({ echoCancellation: true, noiseSuppression: true });
     const mimeType = pickMimeType();
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     const chunks: BlobPart[] = [];
