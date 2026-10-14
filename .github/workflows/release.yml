@@ -1,0 +1,36 @@
+# Rebuilds the tagged release in CI, attaches provenance attestations, and replaces the
+# release assets with the attested build. Trigger: publishing a GitHub release.
+name: Release assets with attestation
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            styles.css
+            manifest.json
+      - run: gh release upload "${{ github.event.release.tag_name }}" main.js styles.css manifest.json --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

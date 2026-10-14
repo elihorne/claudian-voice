@@ -50,11 +50,10 @@ export default class ClaudianVoicePlugin extends Plugin {
 
     this.#ribbonEl = this.addRibbonIcon('mic', 'Claudian Voice: start or stop conversation', () => this.toggleConversation());
 
-    // Suggested defaults only; Obsidian lets the user override or clear them under Hotkeys.
+    // No default hotkeys (Obsidian guideline); the README suggests bindings.
     this.addCommand({
       id: 'toggle-conversation',
       name: 'Start or stop voice conversation',
-      hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'v' }],
       callback: () => this.toggleConversation(),
     });
     this.addCommand({
@@ -65,7 +64,6 @@ export default class ClaudianVoicePlugin extends Plugin {
     this.addCommand({
       id: 'interrupt',
       name: 'Interrupt reply and listen',
-      hotkeys: [{ modifiers: ['Mod', 'Shift'], key: '.' }],
       callback: () => this.#session?.interrupt(),
     });
     this.addCommand({
@@ -76,14 +74,12 @@ export default class ClaudianVoicePlugin extends Plugin {
     this.addCommand({
       id: 'hold-to-talk-dictate',
       name: 'Hold to talk: dictate into the chat (hold the hotkey)',
-      hotkeys: [{ modifiers: ['Mod', 'Alt'], key: 'v' }],
-      callback: () => { void this.holdToTalk('v', 'dictate'); },
+      callback: () => { void this.holdToTalk('dictate'); },
     });
     this.addCommand({
       id: 'hold-to-talk-edit',
       name: 'Hold to talk: edit the selection (hold the hotkey)',
-      hotkeys: [{ modifiers: ['Mod', 'Alt'], key: 'e' }],
-      callback: () => { void this.holdToTalk('e', 'edit'); },
+      callback: () => { void this.holdToTalk('edit'); },
     });
     this.addCommand({
       id: 'read-note',
@@ -219,7 +215,7 @@ export default class ClaudianVoicePlugin extends Plugin {
    * Press-and-hold capture. 'dictate' drops the transcript into the Claudian composer without
    * sending; 'edit' runs Claudian's inline edit on the current selection with the transcript.
    */
-  async holdToTalk(releaseKey: string, target: 'dictate' | 'edit'): Promise<void> {
+  async holdToTalk(target: 'dictate' | 'edit'): Promise<void> {
     if (this.#session?.isRunning) return;
     if (!this.#hold) {
       const recognizer = this.#createRecognizer();
@@ -229,7 +225,7 @@ export default class ClaudianVoicePlugin extends Plugin {
     }
     if (this.#hold.isActive) return;
     const hold = this.#hold;
-    const transcript = await hold.press(releaseKey);
+    const transcript = await hold.press();
     this.#hold = null;
     if (!transcript) return;
     if (target === 'edit') {

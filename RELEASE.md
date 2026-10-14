@@ -6,9 +6,9 @@ First public build. Talk to the Claudian agent in your Obsidian vault and hear i
 
 ### What works
 
-- Hands-free conversation: streaming transcription with semantic end-of-turn, live transcript in the indicator, spoken replies as they stream, listen again. Start/stop with ⌘⇧V; interrupt with ⌘⇧. (period).
+- Hands-free conversation: streaming transcription with semantic end-of-turn, live transcript in the indicator, spoken replies as they stream, listen again. Bind hotkeys under Settings → Hotkeys (none ship by default); the README suggests ⌘⇧V to start/stop and ⌘⇧. to interrupt.
 - The active note and the editor selection ride along as context, as they do for typed prompts.
-- Hold ⌘⌥V to dictate into the composer without sending; hold ⌘⌥E to rewrite the selection by voice through Claudian's inline edit.
+- Hold-to-talk commands: dictate into the composer without sending, or rewrite the selection by voice through Claudian's inline edit. Bind each to a hotkey and hold it while speaking.
 - Read the current note aloud from the cursor with the paragraph highlighted; skip by heading.
 - "Note to self, …" appends to today's daily note without involving the agent.
 - Vault-synced glossary (`.claudian/voice-glossary.md`) for names and jargon the transcriber should spell correctly.

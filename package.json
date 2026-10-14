@@ -1,6 +1,6 @@
 {
   "name": "claudian-voice",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Voice conversation companion plugin for Claudian (Obsidian).",
   "main": "main.js",
   "private": true,
@@ -11,11 +11,15 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "version": "node version-bump.mjs && git add manifest.json versions.json"
   },
-  "keywords": ["obsidian", "obsidian-plugin", "claudian", "voice"],
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "claudian",
+    "voice"
+  ],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.5.2",
-    "builtin-modules": "^5.0.0",
     "esbuild": "^0.28.1",
     "obsidian": "1.13.0",
     "tsx": "^4.23.1",

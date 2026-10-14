@@ -1,7 +1,7 @@
 {
   "id": "claudian-voice",
   "name": "Claudian Voice",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minAppVersion": "1.13.0",
   "description": "Talk to the Claudian agent and hear it answer. Companion plugin for Claudian; owns the microphone, speech-to-text, and text-to-speech so core never has to.",
   "author": "Eli Horne",

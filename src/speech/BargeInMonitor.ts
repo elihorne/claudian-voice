@@ -87,7 +87,7 @@ export class BargeInMonitor {
           }
 
           if (now - started < CALIBRATION_MS) {
-            requestAnimationFrame(tick);
+            window.requestAnimationFrame(tick);
             return;
           }
           if (mic > gate) {
@@ -99,7 +99,7 @@ export class BargeInMonitor {
           } else {
             voicedSince = null;
           }
-          requestAnimationFrame(tick);
+          window.requestAnimationFrame(tick);
         };
         tick();
       });

@@ -72,7 +72,6 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
     return new Promise<RecognitionResult | null>((resolve, reject) => {
       let partial = '';
       let speechStartedAt: number | null = null;
-      let speechMs = 0;
       let settled = false;
       const settle = (value: RecognitionResult | null, error?: Error) => {
         if (settled) return;
@@ -83,12 +82,12 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
         this.#onLevel = null;
         this.#listeners.delete(onEvent);
         signal.removeEventListener('abort', onAbort);
-        clearTimeout(noSpeechTimer);
+        window.clearTimeout(noSpeechTimer);
         if (error) reject(error);
         else resolve(value);
       };
       const onAbort = () => settle(null);
-      const noSpeechTimer = setTimeout(() => {
+      const noSpeechTimer = window.setTimeout(() => {
         if (speechStartedAt === null && !partial) settle(null);
       }, this.options.getNoSpeechTimeoutMs());
 
@@ -99,7 +98,6 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
             speechStartedAt = performance.now();
             break;
           case 'input_audio_buffer.speech_stopped':
-            if (speechStartedAt !== null) speechMs += performance.now() - speechStartedAt;
             speechStartedAt = null;
             break;
           case 'conversation.item.input_audio_transcription.delta':
@@ -114,7 +112,6 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
               this.#log('dropped transcript', { text });
               // Noise or a phantom phrase: keep listening within the same call.
               partial = '';
-              speechMs = 0;
               callbacks.onPartial?.('');
               return;
             }
@@ -180,7 +177,7 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
         resolve();
       };
       // A healthy connection for a while earns the reconnect budget back.
-      setTimeout(() => { if (this.#socket === socket) this.#reconnects = 0; }, 60000);
+      window.setTimeout(() => { if (this.#socket === socket) this.#reconnects = 0; }, 60000);
       socket.onmessage = message => {
         try {
           const event = JSON.parse(String(message.data)) as RealtimeEvent;

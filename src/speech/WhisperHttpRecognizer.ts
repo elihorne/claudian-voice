@@ -91,7 +91,7 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
         if (now - started < CALIBRATION_MS) {
           ambientPeak = Math.max(ambientPeak, rms);
           threshold = Math.max(configuredThreshold, ambientPeak * AMBIENT_MARGIN);
-          requestAnimationFrame(tick);
+          window.requestAnimationFrame(tick);
           return;
         }
         if (rms > threshold) {
@@ -103,7 +103,7 @@ export class WhisperHttpRecognizer implements SpeechRecognizer {
         } else if (!heardSpeech && now - started > noSpeechMs) {
           return resolve('silence');
         }
-        requestAnimationFrame(tick);
+        window.requestAnimationFrame(tick);
       };
       tick();
     });

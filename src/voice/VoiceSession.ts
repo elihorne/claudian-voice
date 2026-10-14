@@ -2,6 +2,7 @@ import type { ClaudianBridge, TurnResult } from '../claudian/bridge';
 import type { Speaker, SpeechRecognizer } from '../speech/types';
 import { type LocalVerb, parseLocalVerb } from './LocalVerbs';
 import { isCancelPhrase, SentenceCursor } from './speakable';
+import { clearTimer, setTimer } from '../timers';
 
 /** Watches the mic while the agent speaks; resolves true when the user talks over it. */
 export interface BargeInWatcher {
@@ -245,14 +246,14 @@ export class VoiceSession {
     let progressTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleProgress = (delay: number, phrase: string) => {
       if (!progress) return;
-      progressTimer = setTimeout(() => {
+      progressTimer = setTimer(() => {
         if (signal.aborted || heardReply) return;
         void speaker.speak(phrase);
         scheduleProgress(progress.everyMs, progress.again);
       }, delay);
     };
     scheduleProgress(progress?.firstAfterMs ?? 0, progress?.first ?? '');
-    const clearProgress = () => { if (progressTimer) clearTimeout(progressTimer); progressTimer = null; };
+    const clearProgress = () => { if (progressTimer) clearTimer(progressTimer); progressTimer = null; };
 
     const aborted = new Promise<TurnResult>(resolve => {
       signal.addEventListener('abort', () => resolve({ text: '', outcome: 'interrupted' }), { once: true });
@@ -296,7 +297,7 @@ export class VoiceSession {
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0 || signal?.aborted) return Promise.resolve();
   return new Promise(resolve => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    const timer = setTimer(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimer(timer); resolve(); }, { once: true });
   });
 }

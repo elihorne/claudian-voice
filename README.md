@@ -31,6 +31,8 @@ cd claudian-voice && npm install && npm run build
 
 Either way: reload Obsidian, enable **Claudian Voice** under Community plugins, then in its settings paste an OpenAI API key (used for transcription and speech). Set **Language** to your language code (`en`, `sv`, `de`) unless you mix languages, in which case leave it blank.
 
+The plugin ships no default hotkeys (Obsidian's guideline). Under Settings → Hotkeys, search "Claudian Voice" and bind what you like; the ones used in this README are ⌘⇧V for start/stop, ⌘⇧. for interrupt, ⌘⌥V for hold-to-talk dictation and ⌘⌥E for hold-to-talk edit. Hold-to-talk works with any binding that includes a modifier.
+
 ## What it does
 
 **Conversation.** Start a session (⌘⇧V, the ribbon microphone, or the command palette). A rising chime, then an orb at the top of the chat view: red and breathing with your voice while it listens, your words appearing beside it as you speak; accent-coloured while the agent thinks; green bars while it talks. It sends when you sound finished (not after a fixed pause), speaks the reply as it streams, and listens again. ⌘⇧. interrupts and listens. Say "cancel" or "never mind" to drop an utterance. A tick means it is listening for your next prompt; a falling chime means the session ended.
@@ -80,7 +82,7 @@ For live reload, install the Hot Reload plugin and the `.hotreload` marker in th
 
 ```
 src/
-├── main.ts                         # Commands, hotkeys, indicator, session lifecycle, context prefixes
+├── main.ts                         # Commands, indicator, session lifecycle, context prefixes
 ├── settings.ts
 ├── claudian/
 │   ├── bridge.ts                   # What the voice loop needs from Claudian, API-agnostic

@@ -65,3 +65,12 @@ Kept small, and mostly things the planned multi-session work needs anyway. To be
 - Pending-interaction events with an answer method, for approvals by voice.
 - An optional `source` tag on sent messages, for the transcript marker.
 - Streaming partial text, if the maintainer is ever comfortable exposing it; the plugin works without it but speaks sooner with it.
+
+## From the Obsidian review of 0.1.0
+
+Fixed in 0.1.1: `window.setTimeout` family for popout windows, no default hotkeys, `builtin-modules` replaced by `node:module`, unused variable, release workflow with build provenance attestations. `fetch` stays in `OpenAISpeaker` because `requestUrl` cannot stream the PCM body.
+
+Still open:
+
+- Declarative settings (`getSettingDefinitions`, Obsidian 1.13+) so settings appear in settings search; the tab currently re-calls `display()`.
+- Replace `ScriptProcessorNode` in the Realtime recognizer with an `AudioWorklet` loaded from a Blob URL. Moves resampling off the main thread; needs testing against the Chromium context cap.

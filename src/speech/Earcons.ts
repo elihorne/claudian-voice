@@ -28,7 +28,7 @@ export class Earcons {
       cursor += (note.gapMs ?? note.ms) / 1000;
     }
     const total = (cursor - start) * 1000 + 60;
-    await new Promise(resolve => setTimeout(resolve, total));
+    await new Promise(resolve => window.setTimeout(resolve, total));
   }
 }
 

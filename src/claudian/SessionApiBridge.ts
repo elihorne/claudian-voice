@@ -13,6 +13,7 @@
  * method names are experimental; `pick()` is the only place that knows them.
  */
 import type { ClaudianBridge, SendOptions, TurnResult } from './bridge';
+import { clearTimer, setTimer } from '../timers';
 
 export const SUPPORTED_SESSION_API_VERSION = 1;
 
@@ -114,7 +115,7 @@ export class SessionApiBridge implements ClaudianBridge {
         if (settled) return;
         settled = true;
         unsubscribe?.();
-        if (timer) clearTimeout(timer);
+        if (timer) clearTimer(timer);
         signal.removeEventListener('abort', onAbort);
         resolve(value);
       };
@@ -133,7 +134,7 @@ export class SessionApiBridge implements ClaudianBridge {
         const idle = transcript?.status ? transcript.status === 'idle' : true;
         if (transcript && transcript.totalTurns > turnsBefore && idle) return finish(true);
         if (performance.now() - started > POLL_TIMEOUT_MS) return finish(false);
-        timer = setTimeout(() => { void poll(); }, POLL_MS);
+        timer = setTimer(() => { void poll(); }, POLL_MS);
       };
       void poll();
     });

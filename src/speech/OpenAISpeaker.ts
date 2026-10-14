@@ -194,6 +194,7 @@ export class OpenAISpeaker implements Speaker {
   }
 
   async #fetchStreaming(text: string, stream: PcmStream, generation: number): Promise<void> {
+    // fetch, not requestUrl: PCM is streamed and played as it arrives, and requestUrl buffers the whole body.
     const response = await fetch(this.options.getEndpoint().trim(), {
       method: 'POST',
       headers: this.#headers(),

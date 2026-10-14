@@ -39,7 +39,7 @@ function waitFor<T>(probe: () => T | null, timeoutMs: number): Promise<T | null>
       const value = probe();
       if (value) return resolve(value);
       if (performance.now() - started > timeoutMs) return resolve(null);
-      requestAnimationFrame(tick);
+      window.requestAnimationFrame(tick);
     };
     tick();
   });
