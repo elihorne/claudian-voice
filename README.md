@@ -6,7 +6,7 @@ Status: early and under active development. Tracks [YishenTu/claudian#1611](http
 
 ## Before you install: it needs a Claudian build with the companion API
 
-The released Claudian does not yet expose an API for other plugins. The maintainer is building a session-addressed one (see #1611); until that ships, this plugin runs against an interim build:
+The released Claudian does not yet expose an API for other plugins. The maintainer is building one: [#1623](https://github.com/YishenTu/claudian/pull/1623) lands cross-session messaging inside Claudian, and the outside-client API is its follow-up (see [#1611](https://github.com/YishenTu/claudian/issues/1611)). Until that ships, this plugin runs against an interim build:
 
 ```sh
 cd ~/src   # anywhere outside your vault
@@ -42,6 +42,10 @@ Reload Obsidian, enable **Claudian Voice** under Community plugins, then in its 
 **Glossary.** Names, products, and jargon the transcriber should spell correctly, from the settings box and from `.claudian/voice-glossary.md` in the vault so it syncs across machines. "Add selected text to voice glossary" appends to that file.
 
 **While the agent works.** If it is busy with tools and has written nothing for a few seconds, the voice says "Working on it", then "Still working" every twenty seconds, so silence never means failure.
+
+**When you walk away.** A session that hears nothing for 45 seconds ends itself with the falling chime, since streaming transcription is billed while the mic is open. The threshold is in settings; 0 keeps listening until you stop it.
+
+**When something is off.** Settings → Debug logging writes transcription and session events to the developer console (⌘⌥I) as `[claudian-voice]` lines.
 
 Hold to talk, inline edit, read aloud, capture, and voice barge-in landed recently and have had light testing; the conversation loop, streaming transcription, and speech are the parts that have been exercised most.
 
