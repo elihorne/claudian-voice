@@ -10,7 +10,7 @@ The released Claudian does not yet expose an API for other plugins. The maintain
 
 ```sh
 cd ~/src   # anywhere outside your vault
-git clone -b feat/public-chat-api https://github.com/elihorne/claudian.git   # rebased on Claudian 2.3.21
+git clone -b feat/public-chat-api https://github.com/elihorne/claudian.git
 cd claudian && npm install && npm run build
 cp main.js manifest.json styles.css /path/to/vault/.obsidian/plugins/realclaudian/
 ```
