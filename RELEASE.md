@@ -1,6 +1,14 @@
-## Claudian Voice 0.1.0 (pre-release)
+## Claudian Voice 0.1.1
 
-First public build. Talk to the Claudian agent in your Obsidian vault and hear it answer.
+Talk to the Claudian agent in your Obsidian vault and hear it answer.
+
+### What's new in 0.1.1
+
+Changes from the Obsidian plugin review.
+
+- **No default hotkeys.** The plugin no longer ships key bindings, so it cannot clash with yours. Bind the commands under Settings → Hotkeys (search "Claudian Voice"); the README lists suggested bindings. Hold-to-talk works with any binding that includes a modifier. **If you used 0.1.0, rebind your keys after updating.**
+- **Window timers.** Timers use the window they run in (Obsidian popout windows have their own), falling back to the globals under node for tests.
+- **Attested releases.** Publishing a release rebuilds `main.js`, `manifest.json` and `styles.css` in CI from the tagged commit, runs the tests, attaches build provenance attestations and replaces the assets with that build.
 
 **Requires a Claudian build with the companion API.** The released Claudian (2.3.21) does not expose one yet; the maintainer's outside-client API is a follow-up to YishenTu/claudian#1623. Until it ships, build Claudian from `elihorne/claudian`, branch `feat/public-chat-api`, and copy `main.js`, `manifest.json` and `styles.css` over the community install. Steps are in the README.
 
