@@ -1,5 +1,6 @@
-import { floatToPcm16, pcm16ToBase64, resample, rootMeanSquare } from './pcm';
 import { openMicrophone } from './microphone';
+import { pcm16ToBase64 } from './pcm';
+import { ensurePcmCaptureWorklet, PCM_CAPTURE_PROCESSOR, type PcmCaptureMessage } from './pcmCaptureWorklet';
 import type { ListenCallbacks, RecognitionResult, SpeechRecognizer } from './types';
 import { isLikelyHallucination } from './WhisperHttpRecognizer';
 
@@ -26,6 +27,8 @@ export interface RealtimeOptions {
 
 const SOCKET_URL = 'wss://api.openai.com/v1/realtime?intent=transcription';
 const TARGET_RATE = 24000;
+/** Audio per socket frame; small keeps the first words moving while you are still talking. */
+const CHUNK_SAMPLES = TARGET_RATE / 20; // 50ms
 /** How much idle audio to retain, and how much of it to send ahead of live audio. */
 const PREROLL_SAMPLES = TARGET_RATE; // 1s
 const PREROLL_SEND_MS = 700;
@@ -44,7 +47,7 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
   #ready: Promise<void> | null = null;
   #stream: MediaStream | null = null;
   #context: AudioContext | null = null;
-  #processor: ScriptProcessorNode | null = null;
+  #capture: AudioWorkletNode | null = null;
   #source: MediaStreamAudioSourceNode | null = null;
   #sending = false;
   #listeners = new Set<(event: RealtimeEvent) => void>();
@@ -148,10 +151,7 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
 
   dispose(): void {
     this.#sending = false;
-    this.#processor?.disconnect();
-    this.#source?.disconnect();
-    this.#processor = null;
-    this.#source = null;
+    this.#releaseGraph();
     for (const track of this.#stream?.getTracks() ?? []) track.stop();
     this.#stream = null;
     void this.#context?.close().catch(() => undefined);
@@ -241,48 +241,70 @@ export class OpenAIRealtimeRecognizer implements SpeechRecognizer {
   }
 
   async #ensureMicrophone(): Promise<void> {
-    if (this.#stream && this.#context && this.#processor) return;
+    if (this.#stream && this.#context && this.#capture) return;
     this.#stream = await openMicrophone({ echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 });
     // Unplugging or switching input devices ends the track; drop our graph so the next listen rebuilds it.
     for (const track of this.#stream.getTracks()) {
       track.onended = () => {
         this.#log('microphone track ended; will reacquire');
-        this.#processor?.disconnect();
-        this.#source?.disconnect();
-        this.#processor = null;
-        this.#source = null;
+        this.#releaseGraph();
         void this.#context?.close().catch(() => undefined);
         this.#context = null;
         this.#stream = null;
         if (this.#sending) void this.#ensureMicrophone().catch(() => undefined);
       };
     }
+    const stream = this.#stream;
     const context = new AudioContext();
     this.#context = context;
-    this.#source = context.createMediaStreamSource(this.#stream);
-    // ScriptProcessor is deprecated but needs no worklet file, which a bundled plugin cannot ship easily.
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    processor.onaudioprocess = event => {
-      const input = event.inputBuffer.getChannelData(0);
-      this.#onLevel?.(rootMeanSquare(input));
-      const pcm = floatToPcm16(resample(input, context.sampleRate, TARGET_RATE));
-      if (!this.#sending) {
-        this.#preroll.push(pcm);
-        this.#prerollSamples += pcm.length;
-        while (this.#prerollSamples > PREROLL_SAMPLES && this.#preroll.length > 1) {
-          this.#prerollSamples -= this.#preroll.shift()?.length ?? 0;
-        }
-        return;
-      }
-      if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
-      this.#send({ type: 'input_audio_buffer.append', audio: pcm16ToBase64(pcm) });
-    };
-    this.#source.connect(processor);
-    // A ScriptProcessor only runs while connected to the graph; a silent gain keeps it alive without playback.
+    try {
+      await ensurePcmCaptureWorklet(context);
+    } catch (error) {
+      for (const track of stream.getTracks()) track.stop();
+      void context.close().catch(() => undefined);
+      if (this.#context === context) { this.#context = null; this.#stream = null; }
+      throw new Error(`Could not start audio capture (${error instanceof Error ? error.message : String(error)}).`);
+    }
+    // Disposed or re-acquired while the worklet loaded; that path owns the graph now.
+    if (this.#context !== context || this.#stream !== stream) return;
+    this.#source = context.createMediaStreamSource(stream);
+    const capture = new AudioWorkletNode(context, PCM_CAPTURE_PROCESSOR, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      channelCount: 1,
+      processorOptions: { targetRate: TARGET_RATE, chunkSamples: CHUNK_SAMPLES },
+    });
+    capture.port.onmessage = (event: MessageEvent<PcmCaptureMessage>) => this.#onCaptured(event.data);
+    this.#source.connect(capture);
+    // Nodes are only pulled while they lead to the destination; a silent gain keeps capture running without playback.
     const mute = context.createGain();
     mute.gain.value = 0;
-    processor.connect(mute).connect(context.destination);
-    this.#processor = processor;
+    capture.connect(mute).connect(context.destination);
+    this.#capture = capture;
+  }
+
+  /** Resampled 16-bit audio from the worklet, with the input level over that chunk. */
+  #onCaptured({ pcm, rms }: PcmCaptureMessage): void {
+    this.#onLevel?.(rms);
+    if (!this.#sending) {
+      this.#preroll.push(pcm);
+      this.#prerollSamples += pcm.length;
+      while (this.#prerollSamples > PREROLL_SAMPLES && this.#preroll.length > 1) {
+        this.#prerollSamples -= this.#preroll.shift()?.length ?? 0;
+      }
+      return;
+    }
+    if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
+    this.#send({ type: 'input_audio_buffer.append', audio: pcm16ToBase64(pcm) });
+  }
+
+  #releaseGraph(): void {
+    this.#capture?.port.close();
+    this.#capture?.disconnect();
+    this.#source?.disconnect();
+    this.#capture = null;
+    this.#source = null;
   }
 
   /** Send the tail of what the mic heard while we were not listening, then start live. */

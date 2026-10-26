@@ -1,3 +1,13 @@
+## Claudian Voice 0.2.1
+
+Housekeeping release from the Obsidian plugin review of 0.2.0. No change to what the plugin does.
+
+- **Settings are searchable.** The settings tab moved to Obsidian's declarative settings API (1.13+), so every Claudian Voice setting appears in the settings search box. Same settings, same layout.
+- **Microphone capture runs in an AudioWorklet.** Resampling to 24kHz and 16-bit conversion now happen off the main thread, replacing the deprecated `ScriptProcessorNode`. Audio reaches the transcriber in 50ms chunks instead of about 85ms.
+- Timers are window-bound throughout, as Obsidian asks for popout windows.
+
+Requires Claudian 2.3.30 or later, as 0.2.0 did.
+
 ## Claudian Voice 0.2.0
 
 Talk to the Claudian agent in your Obsidian vault and hear it answer.

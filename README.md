@@ -84,6 +84,7 @@ src/
 │   └── api.ts                      # Finds whichever API is present, plugin API first
 ├── speech/
 │   ├── OpenAIRealtimeRecognizer.ts # Streaming STT over WebSocket, semantic turn detection
+│   ├── pcmCaptureWorklet.ts        # AudioWorklet: mic → 24kHz pcm16 off the main thread
 │   ├── WhisperHttpRecognizer.ts    # Record, detect silence, upload; hallucination filtering
 │   ├── WebSpeechRecognizer.ts      # Chromium recogniser (does not work in Electron; kept for later)
 │   ├── OpenAISpeaker.ts            # Streaming PCM playback with an output-level tap

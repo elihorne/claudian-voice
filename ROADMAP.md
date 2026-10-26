@@ -73,11 +73,21 @@ Kept small. To be posted as one grouped request on #1611 now that the plugin run
 - An optional `source` tag on sent messages, for the transcript marker.
 - Composer insert, so hold-to-talk dictation lands in the box instead of the clipboard.
 
-## From the Obsidian review of 0.1.0
+## From the Obsidian plugin review
 
-Fixed in 0.1.1: `window.setTimeout` family for popout windows, no default hotkeys, `builtin-modules` replaced by `node:module`, unused variable, release workflow with build provenance attestations. `fetch` stays in `OpenAISpeaker` because `requestUrl` cannot stream the PCM body.
+The listing sits in draft in Obsidian's developer portal; each release gets an automated review there.
 
-Still open:
+Fixed in 0.1.1: `window.setTimeout` family for popout windows, no default hotkeys, `builtin-modules` replaced by `node:module`, unused variable, release workflow with build provenance attestations.
 
-- Declarative settings (`getSettingDefinitions`, Obsidian 1.13+) so settings appear in settings search; the tab currently re-calls `display()`.
-- Replace `ScriptProcessorNode` in the Realtime recognizer with an `AudioWorklet` loaded from a Blob URL. Moves resampling off the main thread; needs testing against the Chromium context cap.
+Fixed in 0.2.1:
+
+- Declarative settings (`getSettingDefinitions`, Obsidian 1.13+), so every setting shows up in settings search. Rows the declarative controls cannot express (masked API key, a play button beside a control) use `render`.
+- `ScriptProcessorNode` replaced by an `AudioWorklet` loaded from a Blob URL (`src/speech/pcmCaptureWorklet.ts`). Resampling and 16-bit conversion run off the main thread; the worklet posts 50ms chunks with their level.
+- Bare `setTimeout` in the timers fallback: timers now go through `window` only, and the node test run aliases `window` to the global object.
+- The `unknown`-in-union and `globalThis` findings went with the old bridge and the timers rewrite.
+
+Left as is, on purpose:
+
+- `fetch` in `OpenAISpeaker`: the speech endpoint streams PCM and `requestUrl` cannot stream a body.
+- Clipboard access: hold-to-talk dictation copies the transcript to the clipboard because the plugin API has no composer insert.
+- Release names must carry the version (`0.2.1`, not blank), or the review warns.
