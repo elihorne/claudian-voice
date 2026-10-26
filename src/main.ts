@@ -1,6 +1,7 @@
 import { type Editor, Notice, Plugin, setIcon } from 'obsidian';
 
 import { describeBridgeFailure, resolveClaudianBridge } from './claudian/api';
+import type { ClaudianBridge } from './claudian/bridge';
 import { ClaudianVoiceSettingTab, type ClaudianVoiceSettings, DEFAULT_SETTINGS, normalizeLanguage } from './settings';
 import { BargeInMonitor } from './speech/BargeInMonitor';
 import { Earcons } from './speech/Earcons';
@@ -238,7 +239,7 @@ export default class ClaudianVoicePlugin extends Plugin {
     if (!status.ok) { new Notice(describeBridgeFailure(status)); return; }
     const sessionId = status.bridge.getActiveSessionId();
     if (!sessionId || !status.bridge.appendText?.(sessionId, transcript)) {
-      // No composer access (session API): fall back to the clipboard so the words are not lost.
+      // No composer access (plugin API): fall back to the clipboard so the words are not lost.
       await navigator.clipboard.writeText(transcript);
       new Notice('Transcript copied; paste it where you need it.');
     }
@@ -297,9 +298,9 @@ export default class ClaudianVoicePlugin extends Plugin {
 
   /**
    * Claudian captures the live editor selection itself on the shim's submit path. The
-   * session API may not, so there the selection is quoted into the prompt explicitly.
+   * plugin API delivers plain text, so there the selection is quoted into the prompt.
    */
-  #selectionPrefix(bridgeKind: 'local-shim' | 'session-api'): string {
+  #selectionPrefix(bridgeKind: ClaudianBridge['kind']): string {
     if (bridgeKind === 'local-shim') return '';
     const selection = this.app.workspace.activeEditor?.editor?.getSelection().trim();
     if (!selection) return '';

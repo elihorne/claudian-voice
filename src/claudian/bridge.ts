@@ -1,8 +1,8 @@
 /**
  * What the voice loop needs from Claudian, independent of which API shape provides it.
- * Two adapters implement this: `SessionApiBridge` over the session-addressed API the
- * maintainer is building (YishenTu/claudian#1611), and `LocalShimBridge` over the
- * interim tab-handle API in the local feat/public-chat-api build.
+ * Two adapters implement this: `PluginApiBridge` over Claudian's plugin API (2.3.30 and
+ * later, YishenTu/claudian#1798), and `LocalShimBridge` over the interim tab-handle API in
+ * the fork's feat/public-chat-api build.
  */
 export type TurnOutcome = 'completed' | 'interrupted' | 'error';
 
@@ -19,7 +19,7 @@ export interface SendOptions {
 }
 
 export interface ClaudianBridge {
-  readonly kind: 'session-api' | 'local-shim';
+  readonly kind: 'plugin-api' | 'local-shim';
   readonly supportsStreaming: boolean;
   getActiveSessionId(): string | null;
   /** Resolves when the turn ends. Never rejects for agent errors; those surface as `outcome: 'error'`. */
@@ -37,7 +37,7 @@ export type BridgeStatus =
 export function describeBridgeFailure(status: Extract<BridgeStatus, { ok: false }>): string {
   switch (status.reason) {
     case 'not-installed': return 'Claudian is not installed or not enabled.';
-    case 'no-api': return 'This Claudian version does not expose a companion API yet. Update Claudian.';
+    case 'no-api': return 'This Claudian version has no plugin API. Update Claudian to 2.3.30 or later.';
     case 'version': return status.detail ?? 'Incompatible Claudian API version.';
   }
 }

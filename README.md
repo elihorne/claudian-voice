@@ -1,21 +1,14 @@
 # Claudian Voice
 
-Talk to the agent in your vault and hear it answer. A companion plugin for [Claudian](https://github.com/YishenTu/claudian): it owns the microphone, speech-to-text, and text-to-speech, and drives Claudian through a small companion API, so no audio code lives in Claudian itself.
+Talk to the agent in your vault and hear it answer. A companion plugin for [Claudian](https://github.com/YishenTu/claudian): it owns the microphone, speech-to-text, and text-to-speech, and drives Claudian through its plugin API, so no audio code lives in Claudian itself.
 
 Status: early and under active development. Tracks [YishenTu/claudian#1611](https://github.com/YishenTu/claudian/issues/1611). See [ROADMAP.md](ROADMAP.md).
 
-## Before you install: it needs a Claudian build with the companion API
+## Requirements
 
-The released Claudian does not yet expose an API for other plugins. The maintainer is building one: [#1623](https://github.com/YishenTu/claudian/pull/1623) lands cross-session messaging inside Claudian, and the outside-client API is its follow-up (see [#1611](https://github.com/YishenTu/claudian/issues/1611)). Until that ships, this plugin runs against an interim build:
+Claudian 2.3.30 or later. That release added the plugin API this plugin runs on ([#1798](https://github.com/YishenTu/claudian/pull/1798), experimental, version 1): send a prompt to a session as the user's own input, stop it, and read the final reply when the turn ends. If you are behind, update Claudian under Community plugins.
 
-```sh
-cd ~/src   # anywhere outside your vault
-git clone -b feat/public-chat-api https://github.com/elihorne/claudian.git
-cd claudian && npm install && npm run build
-cp main.js manifest.json styles.css /path/to/vault/.obsidian/plugins/realclaudian/
-```
-
-That overwrites the community-installed Claudian's three files (your settings in `data.json` are untouched). Every Claudian release replaces them again, so keep this folder and re-run the build and copy after each update. When the maintainer's experimental API is published, the plugin will detect it and this step goes away.
+If you built the `feat/public-chat-api` fork of Claudian for an earlier version of this plugin, updating Claudian from Community plugins replaces it, which is what you want. The fork is no longer needed. The plugin still recognises the fork's API when it finds one, and that path goes away in a later release.
 
 ## Install the plugin
 
@@ -35,11 +28,11 @@ The plugin ships no default hotkeys (Obsidian's guideline). Under Settings → H
 
 ## What it does
 
-**Conversation.** Start a session (⌘⇧V, the ribbon microphone, or the command palette). A rising chime, then an orb at the top of the chat view: red and breathing with your voice while it listens, your words appearing beside it as you speak; accent-coloured while the agent thinks; green bars while it talks. It sends when you sound finished (not after a fixed pause), speaks the reply as it streams, and listens again. ⌘⇧. interrupts and listens. Say "cancel" or "never mind" to drop an utterance. A tick means it is listening for your next prompt; a falling chime means the session ended.
+**Conversation.** Start a session (⌘⇧V, the ribbon microphone, or the command palette). A rising chime, then an orb at the top of the chat view: red and breathing with your voice while it listens, your words appearing beside it as you speak; accent-coloured while the agent thinks; green bars while it talks. It sends when you sound finished (not after a fixed pause), speaks the reply as soon as the agent's turn ends, and listens again. If the agent asks for a permission or a question, the turn waits until you answer it on screen. ⌘⇧. interrupts and listens. Say "cancel" or "never mind" to drop an utterance. A tick means it is listening for your next prompt; a falling chime means the session ended.
 
-**Context.** The note you are looking at is attached to your spoken prompt whenever it changed since your last voice turn, the same way Claudian's "Add to chat" does. Text you have selected goes through Claudian's own selection capture, exactly as if typed.
+**Context.** The note you are looking at is attached to your spoken prompt whenever it changed since your last voice turn, the same way Claudian's "Add to chat" does. Text you have selected is quoted into the prompt.
 
-**Hold to talk.** Hold ⌘⌥V, speak, release: the transcript lands in the Claudian composer without sending, so you can add an `@mention` or fix a word first. Hold ⌘⌥E with text selected and say what to change: Claudian's inline edit opens with that instruction and shows its diff.
+**Hold to talk.** Hold ⌘⌥V, speak, release: the transcript is copied to the clipboard so you can paste it into the Claudian composer, add an `@mention` or fix a word, and send it yourself. (Claudian's plugin API has no composer access; on the fork build the text is inserted directly.) Hold ⌘⌥E with text selected and say what to change: Claudian's inline edit opens with that instruction and shows its diff.
 
 **Read aloud.** "Read the current note aloud" reads from the cursor's paragraph, highlighting and scrolling the editor as it goes. Skip by heading, stop to restore your selection. In a session, "read this note" does the same.
 
@@ -86,9 +79,9 @@ src/
 ├── settings.ts
 ├── claudian/
 │   ├── bridge.ts                   # What the voice loop needs from Claudian, API-agnostic
-│   ├── SessionApiBridge.ts         # Adapter for the maintainer's planned session API
-│   ├── LocalShimBridge.ts          # Adapter for the interim tab-handle API (streams partials)
-│   └── api.ts                      # Finds whichever API is present
+│   ├── PluginApiBridge.ts          # Adapter for Claudian's plugin API (2.3.30+): send, turn-ended event, read
+│   ├── LocalShimBridge.ts          # Adapter for the fork's interim tab-handle API (streams partials)
+│   └── api.ts                      # Finds whichever API is present, plugin API first
 ├── speech/
 │   ├── OpenAIRealtimeRecognizer.ts # Streaming STT over WebSocket, semantic turn detection
 │   ├── WhisperHttpRecognizer.ts    # Record, detect silence, upload; hallucination filtering

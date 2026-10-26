@@ -1,22 +1,26 @@
-## Claudian Voice 0.1.1
+## Claudian Voice 0.2.0
 
 Talk to the Claudian agent in your Obsidian vault and hear it answer.
 
-### What's new in 0.1.1
+### What's new in 0.2.0
 
-Changes from the Obsidian plugin review.
+**Runs on Claudian's own plugin API.** Claudian 2.3.30 added an experimental API for other plugins ([YishenTu/claudian#1798](https://github.com/YishenTu/claudian/pull/1798)): send a prompt to a session as the user's own input, stop it, and read the final reply when the turn ends. This release drives Claudian through it. No fork build, no copying files over the community install.
 
-- **No default hotkeys.** The plugin no longer ships key bindings, so it cannot clash with yours. Bind the commands under Settings → Hotkeys (search "Claudian Voice"); the README lists suggested bindings. Hold-to-talk works with any binding that includes a modifier. **If you used 0.1.0, rebind your keys after updating.**
-- **Window timers.** Timers use the window they run in (Obsidian popout windows have their own), falling back to the globals under node for tests.
-- **Attested releases.** Publishing a release rebuilds `main.js`, `manifest.json` and `styles.css` in CI from the tagged commit, runs the tests, attaches build provenance attestations and replaces the assets with that build.
+**Requires Claudian 2.3.30 or later.** Update Claudian under Community plugins. If you built the `feat/public-chat-api` fork for 0.1.x, the update replaces it, which is what you want. 0.1.x against Claudian 2.3.30 or later fails every voice turn with "text is required unless mode is interrupt"; this release fixes that.
 
-**Requires a Claudian build with the companion API.** The released Claudian (2.3.21) does not expose one yet; the maintainer's outside-client API is a follow-up to YishenTu/claudian#1623. Until it ships, build Claudian from `elihorne/claudian`, branch `feat/public-chat-api`, and copy `main.js`, `manifest.json` and `styles.css` over the community install. Steps are in the README.
+What changes in use:
+
+- **Replies are spoken when the turn ends**, not as they stream. The API delivers the final answer only. Streaming partials are the first thing on the list to ask Claudian for.
+- **Hold-to-talk dictation copies to the clipboard** instead of inserting into the composer, which the API does not expose. Paste, edit, send.
+- **Selected text is quoted into the prompt** rather than captured by Claudian at send time. Same effect for the agent.
+- **A permission prompt or question from the agent pauses the spoken turn** until you answer it on screen. The voice loop keeps saying "still working" meanwhile.
+- The fork's tab-handle API is still recognised if present, with streaming and composer insert as before. That fallback goes away in a later release.
 
 ### What works
 
-- Hands-free conversation: streaming transcription with semantic end-of-turn, live transcript in the indicator, spoken replies as they stream, listen again. Bind hotkeys under Settings → Hotkeys (none ship by default); the README suggests ⌘⇧V to start/stop and ⌘⇧. to interrupt.
-- The active note and the editor selection ride along as context, as they do for typed prompts.
-- Hold-to-talk commands: dictate into the composer without sending, or rewrite the selection by voice through Claudian's inline edit. Bind each to a hotkey and hold it while speaking.
+- Hands-free conversation: streaming transcription with semantic end-of-turn, live transcript in the indicator, spoken reply, listen again. Bind hotkeys under Settings → Hotkeys (none ship by default); the README suggests ⌘⇧V to start/stop and ⌘⇧. to interrupt.
+- The active note and the editor selection ride along as context.
+- Hold-to-talk commands: dictate to the clipboard, or rewrite the selection by voice through Claudian's inline edit. Bind each to a hotkey and hold it while speaking.
 - Read the current note aloud from the cursor with the paragraph highlighted; skip by heading.
 - "Note to self, …" appends to today's daily note without involving the agent.
 - Vault-synced glossary (`.claudian/voice-glossary.md`) for names and jargon the transcriber should spell correctly.
@@ -28,6 +32,7 @@ OpenAI Realtime (`gpt-4o-mini-transcribe`) for transcription and OpenAI `tts-1` 
 
 ### Known limitations
 
+- The plugin API is experimental and may change in Claudian minor releases while its `version` is 1. The plugin checks the version and says so if it moves.
 - Hold-to-talk, inline edit, read aloud, capture and voice barge-in have had light testing. The conversation loop is the exercised path.
 - Barge-in (interrupting by speaking) is off by default; it works best on headphones.
 - Inline edit drives Claudian's modal directly until Claudian offers an entry point.

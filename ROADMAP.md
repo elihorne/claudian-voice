@@ -20,9 +20,9 @@ Four rules follow from that. Anything that can be done inside Obsidian in millis
 - Glossary from settings and `.claudian/voice-glossary.md`, fed to the transcriber; command to add selected text.
 - Echo-aware barge-in (off by default; headphones recommended).
 - Spoken progress while the agent works silently; sound cues on start, listen, stop, error.
-- Bridge abstraction: runs on the interim tab-handle API today and the maintainer's session API when it ships.
+- Runs on Claudian's plugin API (2.3.30+, #1798): prompts land as the user's own input, interrupt stops the turn, the final reply is read when `claudian:turn-ended` fires. The fork's tab-handle shim stays as a fallback for one release.
 - Handover without clipping: zero gap after a reply, 700ms mic pre-roll sent ahead of live audio, non-blocking cue.
-- First words sooner: first sentence spoken as soon as it completes, long openers start at a clause break.
+- First words sooner: first sentence spoken as soon as it completes, long openers start at a clause break. Needs streaming partials, so today only on the fork shim; the plugin API delivers the reply whole.
 - Resilience: Realtime socket reconnects mid-listen, mic reacquired on device change, one shared AudioContext.
 - Idle auto-stop (cost guard), cached audio for fixed phrases, language-code normalisation, settings migrations.
 
@@ -48,23 +48,30 @@ Four rules follow from that. Anything that can be done inside Obsidian in millis
 
 **Presence and privacy.** Auto-stop after idle, never record when Obsidian is not focused (optional), a mute word, and cost display since this bills two APIs.
 
-## What #1623 changed (merged 2026-10-14)
+## What #1623 and #1798 changed
 
-Cross-session messaging landed in Claudian core: `send` with modes `queue`, `steer` (joins a running turn) and `interrupt` (stops it like the user's Stop), `read_session` returning `## T<n> user` / `## T<n> assistant` blocks, and session status `idle | running | awaiting-user`. It is agent-to-agent only for now; the outside-client API is the follow-up. The bridge already speaks this shape.
+[#1623](https://github.com/YishenTu/claudian/pull/1623) (merged 2026-10-14) landed cross-session messaging in Claudian core: `send` with modes `queue`, `steer` (joins a running turn) and `interrupt` (stops it like the user's Stop), `read_session`, and session status `idle | running | awaiting-user`. Agent-to-agent only.
 
-One thing to raise when the API arrives: a mailbox message shows in the recipient as "From session: <title>", never enters the composer and carries no editor selection. For voice, the prompt should be the user's own message with the normal selection capture, as the interim tab-handle shim does today.
+[#1798](https://github.com/YishenTu/claudian/pull/1798) (merged 2026-10-23, shipped in Claudian 2.3.30) opened it to other plugins as `app.plugins.getPlugin('realclaudian').api`, experimental at `version` 1:
+
+- `getActiveSessionId()`: the session in the focused chat view.
+- `send(sessionId, { text, mode })`: the text arrives as the user's own prompt, no "From session" envelope, whether the session is open in a tab or not. Resolves as soon as the text is accepted with `started | queued | steered | uncertain | interrupted | idle`. `{ mode: 'interrupt' }` without text only stops the session.
+- `read(sessionId)`: the last finished turn's final answer as markdown, or `(interrupted)`, `(error)`, `(no reply)`.
+- Workspace event `claudian:turn-ended` with `{ sessionId }`, for every session and turn.
+
+Both things this plugin asked for arrived: companion sends are user input, and interrupt is exposed. What the API does not carry: streaming partials, composer access, editor selection (quoted into the prompt instead), and a way to ask whether a session is busy before sending. The bridge treats a `queued` status as "another turn ends first" and waits for the second `turn-ended`.
 
 ## What we will ask of Claudian
 
-Kept small, and mostly things the planned multi-session work needs anyway. To be posted as one grouped request once the experimental session API exists and this plugin runs against it.
+Kept small. To be posted as one grouped request on #1611 now that the plugin runs on the shipped API.
 
-- Outside-client access to `send` with `mode: 'interrupt'` (now in core) so barge-in can cut a turn.
-- Sends from a companion treated as user input (user message, selection capture), not agent mail.
+- Streaming partial text, or a per-text-block event. The biggest remaining gap: first words wait for the whole reply.
+- A status query (`idle | running | awaiting-user`) for a session, so the bridge need not infer it from `queued`.
 - List and switch sessions, for session verbs.
 - An inline-edit entry point taking an instruction string, replacing the DOM-driven `InlineEditDriver`.
-- Pending-interaction events with an answer method, for approvals by voice.
+- Pending-interaction events with an answer method, for approvals by voice. Today a permission prompt stalls the spoken turn until it is answered on screen.
 - An optional `source` tag on sent messages, for the transcript marker.
-- Streaming partial text, if the maintainer is ever comfortable exposing it; the plugin works without it but speaks sooner with it.
+- Composer insert, so hold-to-talk dictation lands in the box instead of the clipboard.
 
 ## From the Obsidian review of 0.1.0
 
