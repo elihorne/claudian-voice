@@ -2,7 +2,7 @@
 
 Talk to the agent in your vault and hear it answer. A companion plugin for [Claudian](https://github.com/YishenTu/claudian): it owns the microphone, speech-to-text, and text-to-speech, and drives Claudian through its plugin API, so no audio code lives in Claudian itself.
 
-Status: early and under active development. Tracks [YishenTu/claudian#1611](https://github.com/YishenTu/claudian/issues/1611). See [ROADMAP.md](ROADMAP.md).
+Status: in daily use. Claudian's plugin API is experimental (version 1), so a Claudian release can need a matching update here; when that happens the plugin says so instead of failing. Tracks [YishenTu/claudian#1611](https://github.com/YishenTu/claudian/issues/1611). See [ROADMAP.md](ROADMAP.md).
 
 ## Requirements
 
@@ -12,7 +12,7 @@ If you built the `feat/public-chat-api` fork of Claudian for an earlier version 
 
 ## Install the plugin
 
-The easy way is [BRAT](https://github.com/TfTHacker/obsidian42-brat): install BRAT from the community plugins, then in its settings choose "Add Beta plugin" and enter `elihorne/claudian-voice`. BRAT installs the latest pre-release and keeps it updated.
+In Obsidian, Settings → Community plugins → Browse, search for "Claudian Voice" and install it. To run pre-releases instead, add `elihorne/claudian-voice` as a beta plugin in [BRAT](https://github.com/TfTHacker/obsidian42-brat).
 
 From source:
 
@@ -46,7 +46,7 @@ The plugin ships no default hotkeys (Obsidian's guideline). Under Settings → H
 
 **When something is off.** Settings → Debug logging writes transcription and session events to the developer console (⌘⌥I) as `[claudian-voice]` lines.
 
-Hold to talk, inline edit, read aloud, capture, and voice barge-in landed recently and have had light testing; the conversation loop, streaming transcription, and speech are the parts that have been exercised most.
+The conversation loop, streaming transcription and speech get daily use. Hold to talk, inline edit, read aloud, capture and barge-in work but have had less time in front of real use, so if one of them misbehaves, [open an issue](https://github.com/elihorne/claudian-voice/issues) with the debug log.
 
 ## Engines
 
